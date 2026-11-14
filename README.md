@@ -54,6 +54,13 @@ Requires Go 1.26.4 or newer.
 go install github.com/zemf4you/autoclaude/cmd/autoclaude@latest
 ```
 
+Go puts the command into `~/go/bin`. If your shell does not find
+`autoclaude` afterwards, that directory is not on your `PATH` yet:
+
+```bash
+echo 'export PATH="$HOME/go/bin:$PATH"' >> ~/.zshrc && exec zsh
+```
+
 ## Set up
 
 ```bash
