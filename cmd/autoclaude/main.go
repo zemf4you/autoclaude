@@ -9,8 +9,8 @@
 //	autoclaude [-config path] desktop    start Claude Desktop with the menu
 //
 // Install registers the gateway as a service that starts at login and points
-// Claude Code at it. If the configuration has a [menu], it also sets Claude
-// Desktop up for it; desktop is the fallback where that is not possible.
+// Claude Code at it. If models have menu names, it also sets Claude Desktop
+// up for them; desktop is the fallback where that is not possible.
 package main
 
 import (
@@ -113,21 +113,21 @@ func run(path, command string, assumeYes bool) error {
 // repeated whenever the configuration changes.
 func install(cfg *config.Config, dir string, daemon service.Service, assumeYes bool) error {
 	settings := claudecode.SettingsPath()
-	withMenu := len(cfg.Menu) > 0
+	withMenu := len(cfg.Menu()) > 0
 
 	fmt.Println("autoclaude will:")
 	fmt.Println("  1. Run the gateway as a service of your account that starts at login.")
 	fmt.Printf("  2. Point Claude Code at it, in %s.\n", settings)
 	if withMenu {
-		fmt.Println("  3. Put your models into the menu of Claude Desktop, as the [menu] of your")
-		fmt.Println("     config asks. For that it adds a certificate for claude.ai to your")
+		fmt.Println("  3. Put the models that have a menu name into the menu of Claude Desktop.")
+		fmt.Println("     For that it adds a certificate for claude.ai to your")
 		fmt.Println("     account (your system will ask for your password) and puts the gateway")
 		fmt.Println("     between Claude Desktop and claude.ai.")
 		fmt.Println("     Anthropic does not support this: see \"Anthropic's terms\" in the README.")
 	} else {
-		fmt.Println("  3. Leave Claude Desktop with its standard menu: your config has no [menu].")
-		fmt.Println("     If a certificate and a proxy setting are left from an earlier [menu],")
-		fmt.Println("     they are removed.")
+		fmt.Println("  3. Leave Claude Desktop with its standard menu: no model has a menu name.")
+		fmt.Println("     If a certificate and a proxy setting are left from earlier, they are")
+		fmt.Println("     removed.")
 	}
 	if !assumeYes && !confirmed("Continue?") {
 		fmt.Println("Nothing was changed.")
@@ -219,7 +219,8 @@ func (p *program) Start(service.Service) error {
 	direct := http.NewServeMux()
 	direct.Handle("/", proxy.API(api))
 	interceptions := []proxy.Interception{{Host: gateway.AnthropicHost, CA: ca, Handler: api}}
-	if len(p.cfg.Menu) > 0 {
+	menuNames := p.cfg.Menu()
+	if len(menuNames) > 0 {
 		ca, _, err := proxy.LoadCA(p.dir, menuCA, menu.Host)
 		if err != nil {
 			return err
@@ -228,14 +229,14 @@ func (p *program) Start(service.Service) error {
 		interceptions = append(interceptions, proxy.Interception{
 			Host:    menu.Host,
 			CA:      ca,
-			Handler: &menu.Menu{Models: p.cfg.Menu, Transport: gateway.DirectTransport()},
+			Handler: &menu.Menu{Models: menuNames, Transport: gateway.DirectTransport()},
 		})
 	}
 	listener, err := net.Listen("tcp", p.cfg.Listen)
 	if err != nil {
 		return err
 	}
-	slog.Info("gateway started", "listen", p.cfg.Listen, "ca", caPath, "desktop menu", len(p.cfg.Menu) > 0)
+	slog.Info("gateway started", "listen", p.cfg.Listen, "ca", caPath, "desktop menu", len(menuNames) > 0)
 	p.server = &http.Server{
 		Handler:           proxy.New(direct, interceptions...),
 		ReadHeaderTimeout: 10 * time.Second,

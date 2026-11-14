@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -25,9 +26,15 @@ api_key = "sk-$ecret"
 [providers.local]
 base_url = "http://127.0.0.1:8000"
 
-[models]
-deepseek-v4-pro = "deepseek"
-"claude-haiku-5.5" = "local/Qwen/Qwen3-Coder"
+[[model]]
+id = "deepseek-v4-pro"
+provider = "deepseek"
+menu = "DeepSeek V4 Pro"
+
+[[model]]
+id = "qwen3.5:4b"
+provider = "local"
+upstream = "Qwen/Qwen3-Coder"
 `)
 	if err != nil {
 		t.Fatal(err)
@@ -38,14 +45,15 @@ deepseek-v4-pro = "deepseek"
 	if got := cfg.Providers["deepseek"].APIKey; got != "sk-$ecret" {
 		t.Errorf("api key = %q", got)
 	}
-	want := map[string]Route{
-		"deepseek-v4-pro":  {Provider: "deepseek", Model: "deepseek-v4-pro"},
-		"claude-haiku-5.5": {Provider: "local", Model: "Qwen/Qwen3-Coder"},
+	want := []Model{
+		{ID: "deepseek-v4-pro", Provider: "deepseek", Upstream: "deepseek-v4-pro", Menu: "DeepSeek V4 Pro"},
+		{ID: "qwen3.5:4b", Provider: "local", Upstream: "Qwen/Qwen3-Coder"},
 	}
-	for model, route := range want {
-		if cfg.Models[model] != route {
-			t.Errorf("route of %q = %+v, want %+v", model, cfg.Models[model], route)
-		}
+	if !slices.Equal(cfg.Models, want) {
+		t.Errorf("models = %+v\nwant     %+v", cfg.Models, want)
+	}
+	if menu := cfg.Menu(); len(menu) != 1 || menu["deepseek-v4-pro"] != "DeepSeek V4 Pro" {
+		t.Errorf("menu = %v", menu)
 	}
 }
 
@@ -60,21 +68,24 @@ func TestExample(t *testing.T) {
 	if err != nil {
 		t.Fatalf("with the examples on: %v", err)
 	}
-	if len(cfg.Providers) != 3 || len(cfg.Models) != 3 || len(cfg.Menu) != 2 {
-		t.Errorf("providers %d, models %d, menu %d", len(cfg.Providers), len(cfg.Models), len(cfg.Menu))
+	if len(cfg.Providers) != 3 || len(cfg.Models) != 2 || len(cfg.Menu()) != 2 {
+		t.Errorf("providers %d, models %d, menu %d", len(cfg.Providers), len(cfg.Models), len(cfg.Menu()))
 	}
 }
 
 func TestLoadRejectsMistakes(t *testing.T) {
 	const provider = "[providers.local]\nbase_url = \"http://127.0.0.1:8000\"\n"
+	model := func(id, extra string) string {
+		return "[[model]]\nid = \"" + id + "\"\nprovider = \"local\"\n" + extra
+	}
 	cases := map[string]string{
 		"unknown key":      `listn = ":1"`,
 		"loopback":         `listen = "0.0.0.0:8484"`,
-		"unknown provider": "[models]\nqwen = \"local\"",
+		"unknown provider": model("qwen", ""),
 		"base_url":         "[providers.local]\nbase_url = \"localhost:8000\"",
-		"whitespace":       provider + "[models]\n\"my model\" = \"local\"",
-		"not listed":       provider + "[menu]\nqwen = \"Qwen\"",
-		"cannot take":      provider + "[models]\nqwen = \"local\"\nclaude-opus-4-6 = \"local\"\n[menu]\nqwen = \"Qwen\"",
+		"whitespace":       provider + model("my model", ""),
+		"listed twice":     provider + model("qwen", "") + model("qwen", ""),
+		"cannot take":      provider + model("qwen", "menu = \"Qwen\"\n") + model("claude-opus-4-6", ""),
 	}
 	for want, content := range cases {
 		if _, err := load(t, content); err == nil || !strings.Contains(err.Error(), want) {

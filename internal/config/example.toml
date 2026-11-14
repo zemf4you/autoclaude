@@ -32,17 +32,24 @@ listen = "127.0.0.1:8484"
 
 # ── Models ───────────────────────────────────────────────────────────────────
 #
-# Which provider serves which model. On the left is the model ID you pick in
-# Claude Code. On the right is "provider", or "provider/model" when the
-# provider knows the model under another name. A model that is not listed
-# goes to Anthropic on your subscription.
+# Your models, one [[model]] block each. A model that is not listed here goes
+# to Anthropic on your subscription.
 #
-# An ID with a dot, a colon or a slash has to be quoted.
+#   id         what you pick in Claude Code: `/model deepseek-v4-pro`
+#   provider   the name of one of the providers above
+#   upstream   the model's name at the provider, if it differs from id
+#   menu       the name of the model's own entry in the menu of Claude Desktop
 
-#[models]
-#deepseek-v4-pro = "deepseek"
-#"deepseek/deepseek-v4-pro" = "openrouter"
-#qwen = "local/Qwen/Qwen3-Coder-30B-A3B-Instruct"
+#[[model]]
+#id = "deepseek-v4-pro"
+#provider = "deepseek"
+#menu = "DeepSeek V4 Pro"
+
+#[[model]]
+#id = "qwen"
+#provider = "local"
+#upstream = "Qwen/Qwen3-Coder-30B-A3B-Instruct"
+#menu = "Qwen 3 Coder"
 
 
 # ── Claude Desktop menu ──────────────────────────────────────────────────────
@@ -50,21 +57,20 @@ listen = "127.0.0.1:8484"
 # Claude Desktop lists only Claude models. There are two ways to pick your
 # own model there; use one or the other.
 #
-# 1. Entries of their own. List the models from [models] with the names to
-#    show. `autoclaude install` then adds a certificate for claude.ai to your
-#    user account, asking for your password, and puts the gateway between
-#    Claude Desktop and claude.ai. Anthropic does not support this: read
-#    "Anthropic's terms" in the README before you turn it on.
-
-#[menu]
-#deepseek-v4-pro = "DeepSeek V4 Pro"
-#qwen = "Qwen 3 Coder"
-
-# 2. Borrowed entries, no certificate. Leave [menu] out and give your models,
-#    in [models], the IDs of Claude models you do not use. The menu entry
-#    keeps its name and your model answers. The entries under "More models"
-#    are good candidates: claude-opus-4-6, claude-opus-4-7, claude-opus-4-8,
+# 1. Entries of their own: give your models a `menu` name, as above.
+#    `autoclaude install` then adds a certificate for claude.ai to your user
+#    account, asking for your password, and puts the gateway between Claude
+#    Desktop and claude.ai. Anthropic does not support this: read "Anthropic's
+#    terms" in the README before you turn it on.
+#
+# 2. Borrowed entries, no certificate: leave `menu` out everywhere and give a
+#    model the id of a Claude model you do not use. The menu entry keeps its
+#    name and your model answers. The entries under "More models" are good
+#    candidates: claude-opus-4-6, claude-opus-4-7, claude-opus-4-8,
 #    claude-sonnet-4-6, claude-opus-5, claude-sonnet-5, claude-fable-5,
 #    claude-fable-5-1, claude-haiku-4-5-20251001. For example:
 #
-#      claude-opus-4-6 = "deepseek/deepseek-v4-pro"
+#      [[model]]
+#      id = "claude-opus-4-6"
+#      provider = "deepseek"
+#      upstream = "deepseek-v4-pro"

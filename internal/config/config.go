@@ -19,14 +19,9 @@ type Config struct {
 	Listen string `toml:"listen"`
 	// Providers are third-party Anthropic-compatible providers by name.
 	Providers map[string]Provider `toml:"providers"`
-	// Models maps the model ID of a request to the provider that serves it.
-	// Models that are not listed go to Anthropic.
-	Models map[string]Route `toml:"models"`
-	// Menu lists the models to show in the model menu of Claude Desktop,
-	// with the names to show them under. It is the alternative to giving
-	// models the IDs of Claude models, and needs a certificate in the
-	// user's trust store; see the README.
-	Menu map[string]string `toml:"menu"`
+	// Models are the models served by the providers. A model that is not
+	// listed goes to Anthropic.
+	Models []Model `toml:"model"`
 }
 
 // Provider is a third-party provider of the Anthropic Messages API.
@@ -37,18 +32,30 @@ type Provider struct {
 	APIKey string `toml:"api_key"`
 }
 
-// Route says which provider serves a model and under what name. It is
-// written as "provider", or as "provider/model" when the provider knows the
-// model under a name of its own.
-type Route struct {
-	Provider string
-	Model    string
+// Model is a model of a third-party provider.
+type Model struct {
+	// ID is what the user picks in Claude Code and what requests carry.
+	ID string `toml:"id"`
+	// Provider names the entry of Providers that serves the model.
+	Provider string `toml:"provider"`
+	// Upstream is the model's name at the provider. It defaults to ID.
+	Upstream string `toml:"upstream"`
+	// Menu is the name of the model's own entry in the model menu of
+	// Claude Desktop. It is optional, and needs a certificate in the
+	// user's trust store; see the README.
+	Menu string `toml:"menu"`
 }
 
-// UnmarshalText parses the "provider" and "provider/model" forms.
-func (r *Route) UnmarshalText(text []byte) error {
-	r.Provider, r.Model, _ = strings.Cut(string(text), "/")
-	return nil
+// Menu returns the names of the models that get an entry of their own in
+// the menu of Claude Desktop, by model ID.
+func (c *Config) Menu() map[string]string {
+	names := map[string]string{}
+	for _, m := range c.Models {
+		if m.Menu != "" {
+			names[m.ID] = m.Menu
+		}
+	}
+	return names
 }
 
 // Example is a configuration file with every setting explained. It is what a
@@ -100,31 +107,31 @@ func (c *Config) validate() error {
 			return fmt.Errorf("provider %q: base_url must be an http(s) URL without a query, got %q", name, p.BaseURL)
 		}
 	}
-	for model, route := range c.Models {
+	seen := map[string]bool{}
+	for i := range c.Models {
+		m := &c.Models[i]
 		// The ID ends up inside thinking signatures, delimited by spaces.
-		if model == "" || strings.ContainsAny(model, " \t\n") {
-			return fmt.Errorf("model %q: the ID must not be empty or contain whitespace", model)
+		if m.ID == "" || strings.ContainsAny(m.ID, " \t\n") {
+			return fmt.Errorf("model %q: the id must not be empty or contain whitespace", m.ID)
 		}
-		if _, ok := c.Providers[route.Provider]; !ok {
-			return fmt.Errorf("model %q: unknown provider %q", model, route.Provider)
+		if seen[m.ID] {
+			return fmt.Errorf("model %q is listed twice", m.ID)
 		}
-		if route.Model == "" {
-			route.Model = model
-			c.Models[model] = route
+		seen[m.ID] = true
+		if _, ok := c.Providers[m.Provider]; !ok {
+			return fmt.Errorf("model %q: unknown provider %q", m.ID, m.Provider)
 		}
-	}
-	for model := range c.Menu {
-		if _, ok := c.Models[model]; !ok {
-			return fmt.Errorf("menu: model %q is not listed in [models]", model)
+		if m.Upstream == "" {
+			m.Upstream = m.ID
 		}
 	}
 	// A model reaches the Desktop menu in one of two ways: it takes the
 	// place of a Claude model, or it gets an entry of its own. Mixing the
 	// two would show the same models twice, under different names.
-	if len(c.Menu) > 0 {
-		for model := range c.Models {
-			if strings.HasPrefix(model, claudePrefix) {
-				return fmt.Errorf("model %q: with [menu] set, models cannot take the IDs of Claude models", model)
+	if len(c.Menu()) > 0 {
+		for _, m := range c.Models {
+			if strings.HasPrefix(m.ID, claudePrefix) {
+				return fmt.Errorf("model %q: models cannot take the IDs of Claude models while others have a menu name", m.ID)
 			}
 		}
 	}

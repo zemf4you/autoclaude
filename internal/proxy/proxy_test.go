@@ -25,7 +25,7 @@ func setup(t *testing.T, provider http.HandlerFunc) (proxyURL *url.URL, ca tls.C
 	}
 	gw := gateway.New(&config.Config{
 		Providers: map[string]config.Provider{"local": {BaseURL: upstream.URL}},
-		Models:    map[string]config.Route{"qwen": {Provider: "local", Model: "qwen"}},
+		Models:    []config.Model{{ID: "qwen", Provider: "local", Upstream: "qwen"}},
 	})
 	server := httptest.NewServer(New(API(gw), Interception{Host: gateway.AnthropicHost, CA: ca, Handler: gw}))
 	t.Cleanup(server.Close)

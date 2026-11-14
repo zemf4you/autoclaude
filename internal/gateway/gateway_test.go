@@ -54,9 +54,9 @@ func setup(t *testing.T) (gatewayURL string, claude, provider *fake) {
 	claude, provider = newFake(t), newFake(t)
 	g := New(&config.Config{
 		Providers: map[string]config.Provider{"local": {BaseURL: provider.URL + "/base", APIKey: "provider-key"}},
-		Models: map[string]config.Route{
-			"qwen":         {Provider: "local", Model: "qwen"},
-			"claude-haiku": {Provider: "local", Model: "org/qwen-4b"},
+		Models: []config.Model{
+			{ID: "qwen", Provider: "local", Upstream: "qwen"},
+			{ID: "claude-haiku", Provider: "local", Upstream: "org/qwen-4b"},
 		},
 	})
 	g.anthropic.url = baseURL(claude.URL)

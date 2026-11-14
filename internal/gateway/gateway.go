@@ -50,14 +50,14 @@ func New(cfg *config.Config) *Gateway {
 		models:    map[string]*upstream{},
 		transport: DirectTransport(),
 	}
-	for model, route := range cfg.Models {
-		p := cfg.Providers[route.Provider]
-		g.models[model] = &upstream{
-			name:       route.Provider,
+	for _, m := range cfg.Models {
+		p := cfg.Providers[m.Provider]
+		g.models[m.ID] = &upstream{
+			name:       m.Provider,
 			url:        baseURL(p.BaseURL),
 			thirdParty: true,
 			key:        p.APIKey,
-			model:      route.Model,
+			model:      m.Upstream,
 		}
 	}
 	return g

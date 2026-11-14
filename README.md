@@ -71,13 +71,16 @@ api_key = "sk-..."
 [providers.local]
 base_url = "http://127.0.0.1:8000"
 
-[models]
-deepseek-v4-pro = "deepseek"
-qwen = "local/Qwen/Qwen3-Coder-30B-A3B-Instruct"
+[[model]]
+id = "deepseek-v4-pro"
+provider = "deepseek"
+menu = "DeepSeek V4 Pro" # its name in the menu of Claude Desktop
 
-[menu] # names for the model menu of Claude Desktop
-deepseek-v4-pro = "DeepSeek V4 Pro"
-qwen = "Qwen 3 Coder"
+[[model]]
+id = "qwen"
+provider = "local"
+upstream = "Qwen/Qwen3-Coder-30B-A3B-Instruct" # its name at the provider
+menu = "Qwen 3 Coder"
 ```
 
 Then run `autoclaude install` again. It lists what it is about to change on
@@ -98,7 +101,7 @@ undoes all of it. Restart Claude Code and Claude Desktop afterwards.
    `api.anthropic.com` only, with a certificate authority created on your
    machine that only Claude Code is told to trust; everything else is
    tunnelled through untouched.
-3. **With a `[menu]`, puts your models into the menu of Claude Desktop.**
+3. **Puts the models that have a `menu` name into the menu of Claude Desktop.**
    See below.
 
 The gateway adds your provider keys to requests and passes your subscription
@@ -130,8 +133,8 @@ config uses one or the other.
 
 #### Your own entries in the menu
 
-With a `[menu]` in the config, your models appear in the menu under the
-names you gave them. For that the gateway has to sit on Desktop's connection
+Models that have a `menu` name in the config appear in the menu under that
+name. For that the gateway has to sit on Desktop's connection
 to `claude.ai` as well, and Desktop, unlike Claude Code, trusts only the
 certificates of your user account. So `autoclaude install` does two more
 things:
@@ -166,13 +169,14 @@ And this changes a response of `claude.ai` on its way to the app; see
 
 #### Borrowed entries, no certificate
 
-Without a `[menu]`, give your model the ID of a Claude model you do not use.
-The older models under **More models** are good candidates:
+Leave `menu` out and give your model the ID of a Claude model you do not
+use. The older models under **More models** are good candidates:
 
 ```toml
-[models]
-claude-opus-4-6 = "deepseek/deepseek-v4-pro"
-claude-sonnet-4-6 = "local/Qwen/Qwen3-Coder-30B-A3B-Instruct"
+[[model]]
+id = "claude-opus-4-6"
+provider = "deepseek"
+upstream = "deepseek-v4-pro"
 ```
 
 The menu entry keeps its name: choosing *Opus 4.6* now talks to DeepSeek.
@@ -247,7 +251,7 @@ What applies to everything AutoClaude does:
 
 What applies to the menu of Claude Desktop in addition:
 
-- With a `[menu]`, the gateway also decrypts Desktop's connection to
+- For models with a `menu` name, the gateway also decrypts Desktop's connection to
   `claude.ai` and adds entries to a response of that service. The Consumer
   Terms (§3) forbid to "interfere with, or disrupt" the services and to
   bypass "any of our systems or protective measures"; whether adding menu
@@ -255,7 +259,7 @@ What applies to the menu of Claude Desktop in addition:
 - The gateway does not disguise itself, patch the app or defeat any of its
   checks. The proxy it uses is Desktop's own documented setting.
 
-If that is more than you want to risk, leave `[menu]` out and use the
+If that is more than you want to risk, leave `menu` out and use the
 borrowed entries: nothing touches `claude.ai` then.
 
 ## License
