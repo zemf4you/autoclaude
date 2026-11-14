@@ -111,9 +111,11 @@ models it now serves and anything it had to leave out. Nothing restarts. A
 file it cannot use leaves it as it was. A session that is still on a model
 you removed is told so.
 
-If your models have a smaller context window than Claude Code assumes, set
-`context_window` in the config. Claude Code then compacts the conversation
-before the model overflows.
+When a conversation outgrows a model's context window, the provider rejects
+the request and Claude Code, which knows the overflow errors of the common
+providers and runtimes, compacts the conversation and carries on. Setting
+`context_window` in the config makes it compact earlier, before a request is
+rejected.
 
 `listen` and `desktop` are the exception: they change what is set up on your
 machine, so run `autoclaude install` after changing them.
@@ -239,10 +241,13 @@ ANTHROPIC_BASE_URL=http://127.0.0.1:8484 claude --model qwen
 - A provider has to implement what Claude Code asks of the Messages API:
   streaming, tool use and, for the context meter, `count_tokens`.
 - Claude Code has a single context window setting for all the models it
-  does not know; set it with `context_window` in the config to the smallest
+  does not know, so `context_window` in the config is one value: the smallest
   window among your models. A model that takes a Claude entry with
   `desktop = "slots"` is, to Claude Desktop, that Claude model, so the
-  setting does not reach it there.
+  setting does not reach it there. Either way a model's real window is
+  enforced by its provider, and Claude Code compacts when the provider
+  reports an overflow in a form it recognises; a provider that truncates the
+  conversation silently gives it nothing to react to.
 - When Claude Desktop cancels a request to a third-party model before the
   first byte of the answer, the provider keeps generating until it starts
   to respond.
