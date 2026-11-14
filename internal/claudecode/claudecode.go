@@ -12,6 +12,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/tidwall/gjson"
@@ -23,6 +24,9 @@ import (
 const (
 	proxyVariable = "env.HTTPS_PROXY"
 	caVariable    = "env.NODE_EXTRA_CA_CERTS"
+	// windowVariable is the context window Claude Code assumes for the
+	// models it does not know. Claude models are not affected by it.
+	windowVariable = "env.CLAUDE_CODE_MAX_CONTEXT_TOKENS"
 )
 
 // SettingsPath returns the location of the user's Claude Code settings.
@@ -67,7 +71,7 @@ func Disable(path string) error {
 	if err != nil {
 		return err
 	}
-	for _, variable := range []string{proxyVariable, caVariable} {
+	for _, variable := range []string{proxyVariable, caVariable, windowVariable} {
 		if settings, err = sjson.DeleteBytes(settings, variable); err != nil {
 			return err
 		}
@@ -76,6 +80,27 @@ func Disable(path string) error {
 		if settings, err = sjson.DeleteBytes(settings, "env"); err != nil {
 			return err
 		}
+	}
+	return os.WriteFile(path, settings, 0o644)
+}
+
+// SetContextWindow tells Claude Code the context window, in tokens, of the
+// models it does not know. Zero leaves Claude Code to its own assumption.
+func SetContextWindow(path string, tokens int) error {
+	settings, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) && tokens == 0 {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if tokens == 0 {
+		settings, err = sjson.DeleteBytes(settings, windowVariable)
+	} else {
+		settings, err = sjson.SetBytes(settings, windowVariable, strconv.Itoa(tokens))
+	}
+	if err != nil {
+		return err
 	}
 	return os.WriteFile(path, settings, 0o644)
 }

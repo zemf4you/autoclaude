@@ -93,8 +93,8 @@ func (p *program) reload() (report []string) {
 	}
 	p.cfg = cfg
 	p.gateway.Configure(cfg)
-	if err := claudecode.SetModels(claudecode.SettingsPath(), pickerOptions(cfg)); err != nil {
-		report = append(report, "Warning: the model picker of Claude Code was not updated: "+err.Error())
+	if err := applyModels(claudecode.SettingsPath(), cfg); err != nil {
+		report = append(report, "Warning: the settings of Claude Code were not updated: "+err.Error())
 	}
 	return append(report, modelLines(cfg)...)
 }

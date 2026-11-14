@@ -20,6 +20,10 @@ type Config struct {
 	// Desktop chooses how the models reach the model menu of Claude
 	// Desktop: Slots or Entries.
 	Desktop string `toml:"desktop"`
+	// ContextWindow is the context window, in tokens, that Claude Code is
+	// told to assume for the models. Claude Code has one such value for
+	// all the models it does not know. Zero leaves its own assumption.
+	ContextWindow int `toml:"context_window"`
 	// Providers are third-party Anthropic-compatible providers by name.
 	Providers map[string]Provider `toml:"providers"`
 	// Models are the models served by the providers. A model that is not
@@ -141,6 +145,10 @@ func Load(path string) (cfg *Config, warnings []string, err error) {
 	if cfg.Desktop != Slots && cfg.Desktop != Entries {
 		warnings = append(warnings, fmt.Sprintf("desktop must be %q or %q, got %q; using %q", Slots, Entries, cfg.Desktop, Slots))
 		cfg.Desktop = Slots
+	}
+	if cfg.ContextWindow < 0 {
+		warnings = append(warnings, fmt.Sprintf("context_window must be a number of tokens, got %d; it is ignored", cfg.ContextWindow))
+		cfg.ContextWindow = 0
 	}
 	for _, key := range meta.Undecoded() {
 		warnings = append(warnings, fmt.Sprintf("unknown setting %q is ignored", key))

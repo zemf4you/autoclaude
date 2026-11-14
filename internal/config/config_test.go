@@ -92,7 +92,7 @@ func TestExample(t *testing.T) {
 	if err != nil || len(warnings) != 0 {
 		t.Fatalf("with the examples on: warnings %q, error %v", warnings, err)
 	}
-	if len(cfg.Providers) != 3 || len(cfg.Models) != 2 || len(cfg.Routes()) != 4 {
+	if len(cfg.Providers) != 3 || len(cfg.Models) != 2 || len(cfg.Routes()) != 4 || cfg.ContextWindow != 64000 {
 		t.Errorf("providers %d, models %d, routes %d", len(cfg.Providers), len(cfg.Models), len(cfg.Routes()))
 	}
 }
@@ -102,6 +102,7 @@ func TestMistakesAreLeftOutWithAWarning(t *testing.T) {
 	cfg, warnings, err := load(t, `
 listn = ":1"
 desktop = "menu"
+context_window = -1
 
 [providers.local]
 base_url = "http://127.0.0.1:8000"
@@ -140,13 +141,13 @@ slot = "claude-opus-4-6"
 	if cfg.Routes()["claude-opus-4-6"].ID != "good" {
 		t.Error("a slot goes to the first model that names it")
 	}
-	for _, want := range []string{`desktop must be`, `"listn"`, `"broken"`, `"my model"`, `"good" is ignored`, `"orphan"`, `slot "claude-opus-4-6"`} {
+	for _, want := range []string{`desktop must be`, `context_window must be`, `"listn"`, `"broken"`, `"my model"`, `"good" is ignored`, `"orphan"`, `slot "claude-opus-4-6"`} {
 		if !slices.ContainsFunc(warnings, func(w string) bool { return strings.Contains(w, want) }) {
 			t.Errorf("no warning mentions %s in %q", want, warnings)
 		}
 	}
-	if len(warnings) != 7 {
-		t.Errorf("%d warnings, want 7: %q", len(warnings), warnings)
+	if len(warnings) != 8 {
+		t.Errorf("%d warnings, want 8: %q", len(warnings), warnings)
 	}
 	if cfg.OwnEntries() {
 		t.Error("an unknown desktop setting must fall back to slots")

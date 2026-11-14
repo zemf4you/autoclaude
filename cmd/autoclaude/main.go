@@ -179,7 +179,7 @@ func (s *setup) install(assumeYes bool) error {
 	if err := claudecode.Enable(settings, s.proxyURL(), caPath); err != nil {
 		return err
 	}
-	if err := claudecode.SetModels(settings, pickerOptions(s.cfg)); err != nil {
+	if err := applyModels(settings, s.cfg); err != nil {
 		return err
 	}
 	if s.cfg.OwnEntries() {
@@ -293,6 +293,9 @@ func (s *setup) printConfig() {
 // Claude Desktop.
 func modelLines(cfg *config.Config) []string {
 	lines := []string{"Models:"}
+	if cfg.ContextWindow > 0 {
+		lines[0] = fmt.Sprintf("Models (Claude Code assumes a context window of %d tokens for them):", cfg.ContextWindow)
+	}
 	for _, m := range cfg.Models {
 		lines = append(lines, fmt.Sprintf("  %s, shown as %q, served by %s; in Claude Desktop: %s", m.ID, m.Name, m.Provider, inDesktop(cfg, m)))
 	}
@@ -311,6 +314,15 @@ func inDesktop(cfg *config.Config, m config.Model) string {
 		return "in place of " + m.Slot
 	}
 	return "not shown, the model has no slot"
+}
+
+// applyModels tells Claude Code about the models of a configuration: which
+// to list in its model picker and what context window to assume for them.
+func applyModels(settings string, cfg *config.Config) error {
+	if err := claudecode.SetModels(settings, pickerOptions(cfg)); err != nil {
+		return err
+	}
+	return claudecode.SetContextWindow(settings, cfg.ContextWindow)
 }
 
 // pickerOptions returns the entries of the CLI's model picker for the models

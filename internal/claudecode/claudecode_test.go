@@ -101,3 +101,23 @@ func TestSetModelsLeavesNothingBehind(t *testing.T) {
 		t.Errorf("settings = %s", settings)
 	}
 }
+
+func TestSetContextWindow(t *testing.T) {
+	const original = `{"env":{"FOO":"bar"}}`
+	path := filepath.Join(t.TempDir(), "settings.json")
+	os.WriteFile(path, []byte(original), 0o644)
+
+	if err := SetContextWindow(path, 64000); err != nil {
+		t.Fatal(err)
+	}
+	// Environment variables are strings.
+	if settings, _ := os.ReadFile(path); gjson.GetBytes(settings, "env.CLAUDE_CODE_MAX_CONTEXT_TOKENS").Raw != `"64000"` {
+		t.Errorf("settings = %s", settings)
+	}
+	if err := SetContextWindow(path, 0); err != nil {
+		t.Fatal(err)
+	}
+	if settings, _ := os.ReadFile(path); string(settings) != original {
+		t.Errorf("settings = %s", settings)
+	}
+}

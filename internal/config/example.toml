@@ -33,6 +33,20 @@ listen = "127.0.0.1:8484"
 desktop = "slots"
 
 
+# ── Context window ───────────────────────────────────────────────────────────
+#
+# The context window, in tokens, that Claude Code should assume for your
+# models. Left to itself it assumes a very large one, and a model with a
+# smaller window overflows before Claude Code compacts the conversation.
+# Claude Code keeps a single value for all the models it does not know, so
+# give the smallest window among yours. Claude models are not affected.
+#
+# A model that takes a Claude entry with desktop = "slots" is, to Claude
+# Desktop, that Claude model: this setting does not reach it there.
+
+#context_window = 64000
+
+
 # ── Providers ────────────────────────────────────────────────────────────────
 #
 # The services that run your models. Each must speak the Anthropic Messages
