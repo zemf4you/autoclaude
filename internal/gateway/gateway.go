@@ -261,6 +261,9 @@ func markResponse(resp *http.Response, model string, stream bool) error {
 }
 
 func setBody(r *http.Request, body []byte) {
-	r.Body = io.NopCloser(bytes.NewReader(body))
 	r.ContentLength = int64(len(body))
+	// The transport sends the body again if the connection it picked turns
+	// out to be closed by the upstream.
+	r.GetBody = func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(body)), nil }
+	r.Body, _ = r.GetBody()
 }
