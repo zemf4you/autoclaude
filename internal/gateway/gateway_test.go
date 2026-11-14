@@ -158,18 +158,17 @@ func TestProviderRequestMustCarryWholeHistory(t *testing.T) {
 	}
 }
 
-func TestProviderThinkingIsWrapped(t *testing.T) {
+func TestProviderThinkingIsMarked(t *testing.T) {
 	gw, _, provider := setup(t)
 
 	provider.reply = func(w http.ResponseWriter, _ string) {
 		io.WriteString(w, `{"content":[{"type":"thinking","thinking":"a","signature":"S"},{"type":"redacted_thinking","data":"D"},{"type":"text","text":"b"}]}`)
 	}
 	_, out := post(t, gw, `{"model":"claude-haiku","messages":[]}`)
-	// The author is the model the user picked, not the provider's name for it.
-	if got := gjson.Get(out, "content.0.signature").String(); got != wrap("claude-haiku", "S") {
+	if got := gjson.Get(out, "content.0.signature").String(); got != markPrefix+"S" {
 		t.Errorf("response signature = %q", got)
 	}
-	if got := gjson.Get(out, "content.1.data").String(); got != wrap("claude-haiku", "D") {
+	if got := gjson.Get(out, "content.1.data").String(); got != markPrefix+"D" {
 		t.Errorf("response data of the redacted block = %q", got)
 	}
 
@@ -209,10 +208,10 @@ func TestProviderThinkingIsWrapped(t *testing.T) {
 		got = append(got, step)
 	}
 	want := []string{
-		"content_block_start 0", "content_block_delta 0 " + wrap("qwen", "SIG"), "content_block_stop 0",
-		"content_block_start 1", "content_block_delta 1 " + wrap("qwen", ""), "content_block_stop 1",
+		"content_block_start 0", "content_block_delta 0 " + markPrefix + "SIG", "content_block_stop 0",
+		"content_block_start 1", "content_block_delta 1 " + markPrefix, "content_block_stop 1",
 		"content_block_start 2", "content_block_stop 2",
-		"content_block_start 3 " + wrap("qwen", "D"), "content_block_stop 3",
+		"content_block_start 3 " + markPrefix + "D", "content_block_stop 3",
 	}
 	if !slices.Equal(got, want) {
 		t.Errorf("stream =\n%q\nwant\n%q", got, want)
@@ -225,16 +224,16 @@ func TestThinkingAfterAModelSwitch(t *testing.T) {
 	gw, claude, provider := setup(t)
 	messages := `"messages":[{"role":"assistant","content":[` +
 		`{"type":"thinking","thinking":"a","signature":"CLAUDE"},` +
-		`{"type":"thinking","thinking":"b","signature":"` + wrap("qwen", "Q") + `"},` +
+		`{"type":"thinking","thinking":"b","signature":"` + markPrefix + `Q"},` +
 		`{"type":"text","text":"c"}]}]}`
 
 	post(t, gw, `{"model":"claude-opus",`+messages)
-	if got := carried([]byte(claude.requests()[0])); !slices.Equal(got, []string{"CLAUDE"}) {
-		t.Errorf("Claude got blocks carrying %q", got)
+	if got := marked([]byte(claude.requests()[0])); !slices.Equal(got, []string{"CLAUDE"}) {
+		t.Errorf("Claude got blocks holding %q", got)
 	}
 	post(t, gw, `{"model":"qwen",`+messages)
-	if got := carried([]byte(provider.requests()[0])); !slices.Equal(got, []string{"CLAUDE", "Q"}) {
-		t.Errorf("the provider got blocks carrying %q", got)
+	if got := marked([]byte(provider.requests()[0])); !slices.Equal(got, []string{"CLAUDE", "Q"}) {
+		t.Errorf("the provider got blocks holding %q", got)
 	}
 }
 

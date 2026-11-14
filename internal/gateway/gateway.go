@@ -28,14 +28,8 @@ type upstream struct {
 	// with the client's own credentials.
 	thirdParty bool
 	key        string
-	// id is the ID of a third-party model in the configuration. The
-	// model's thinking blocks are recorded as written by it.
-	id string
 	// model is the model's name at a third-party provider.
 	model string
-	// verifies tells that a third-party provider checks the signatures of
-	// thinking blocks, so that the model takes only its own.
-	verifies bool
 	// extra holds the fields a third-party provider is sent on top of the
 	// client's request.
 	extra map[string]any
@@ -78,9 +72,7 @@ func (g *Gateway) Configure(cfg *config.Config) {
 			url:        baseURL(p.BaseURL),
 			thirdParty: true,
 			key:        p.APIKey,
-			id:         m.ID,
 			model:      m.Upstream,
-			verifies:   m.VerifiesThinking,
 			extra:      m.ExtraBody,
 		}
 	}
@@ -139,7 +131,7 @@ func (g *Gateway) RoundTrip(r *http.Request) (*http.Response, error) {
 		}
 		body = portable(body, up.model, up.extra)
 	}
-	body = openEnvelopes(body, up)
+	body = unmark(body, up.thirdParty)
 
 	out := address(r, up)
 	out.ContentLength = int64(len(body))
@@ -155,7 +147,7 @@ func (g *Gateway) RoundTrip(r *http.Request) (*http.Response, error) {
 	slog.Info("request", "method", r.Method, "path", r.URL.Path,
 		"model", model, "upstream", up.name, "status", resp.StatusCode)
 	if up.thirdParty && resp.StatusCode == http.StatusOK {
-		if err := wrapResponse(resp, up.id, gjson.GetBytes(body, "stream").Bool()); err != nil {
+		if err := markResponse(resp, gjson.GetBytes(body, "stream").Bool()); err != nil {
 			resp.Body.Close()
 			return nil, err
 		}
@@ -189,13 +181,13 @@ func address(r *http.Request, up *upstream) *http.Request {
 	return out
 }
 
-// wrapResponse wraps the thinking blocks in a third-party provider's
+// markResponse marks the thinking blocks in a third-party provider's
 // response. The client reads the response as the request asked for it, as a
 // stream or as a single message, whatever content type the provider declares.
-func wrapResponse(resp *http.Response, model string, stream bool) error {
+func markResponse(resp *http.Response, stream bool) error {
 	if stream {
-		resp.Body = newWrapStream(resp.Body, model)
-		resp.ContentLength = -1 // the envelopes change the length
+		resp.Body = newMarkStream(resp.Body)
+		resp.ContentLength = -1 // the marks change the length
 		resp.Header.Del("Content-Length")
 		return nil
 	}
@@ -204,7 +196,7 @@ func wrapResponse(resp *http.Response, model string, stream bool) error {
 	if err != nil {
 		return err
 	}
-	body = wrapMessage(body, model)
+	body = markMessage(body)
 	resp.Body = io.NopCloser(bytes.NewReader(body))
 	resp.ContentLength = int64(len(body))
 	resp.Header.Set("Content-Length", strconv.Itoa(len(body)))

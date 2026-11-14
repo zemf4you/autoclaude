@@ -41,24 +41,21 @@ in Claude Code is never changed.
 
 A model's thinking comes back to it in later requests. Anthropic verifies
 every thinking block it is sent and refuses a conversation that holds a
-block Claude did not write. Other providers do not verify.
+block Claude did not write.
 
 - **Claude gets only its own thinking.** The thinking of your models is left
   out of a request for a Claude model. This is the one change ever made to
   such a request; Claude's own blocks go back byte for byte.
 - **Your models get their thinking back as they produced it.** The gateway
-  removes nothing from a request for them. Claude Code itself leaves out the
-  signed thinking of other models, Claude's included.
-- **A model whose provider verifies thinking** is sent only its own, whatever
-  the client does. Say so with `verifies_thinking = true`; a Claude model
-  served by another provider is one.
+  removes nothing from a request for them.
 
-To tell the blocks apart, the gateway records the author in each block of
-your models. A block has one field the client returns exactly as it got it:
-the signature, or the data of a redacted block. On its way to Claude Code
-that field is wrapped in an envelope naming the model, such as
-`autoclaude.v1.eyJtb2RlbCI6…`; on its way back to a provider the envelope is
-opened and the original restored. Claude's blocks are never wrapped.
+Claude Code keeps the thinking of other models away from a model by itself,
+but only blocks that are signed, and many providers send an empty signature.
+So the gateway marks the blocks of your models. A block has one field the
+client returns exactly as it got it: the signature, or the data of a
+redacted block. On its way to Claude Code that field gets the prefix
+`autoclaude.v1.`; on its way back to a provider the prefix is taken off.
+Claude's blocks are never marked.
 
 ### History kept by Anthropic
 

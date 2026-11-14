@@ -2,8 +2,6 @@ package gateway
 
 import (
 	"bytes"
-	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -11,69 +9,24 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-// A thinking block is not portable. Anthropic verifies every block it is
-// sent and refuses a conversation that holds one it did not write, which
-// Claude Code then reports to Anthropic as a corrupted conversation. Claude
-// Code leaves out the signed blocks of other models by itself, but a block
-// with an empty signature, which is what many providers send, it lets
-// through. Other providers do not verify.
+// Anthropic verifies every thinking block it is sent and refuses a
+// conversation that holds one it did not write, which Claude Code then
+// reports to Anthropic as a corrupted conversation.
 //
-// The history lives on the client, holds blocks by several authors after a
-// model switch, and does not say who wrote which. So the gateway records the
-// author in the block itself. A block has one field that the client must
-// return exactly as it got it: the signature of a thinking block, the data
-// of a redacted one. In the response of a third-party model the gateway
-// wraps that field in an envelope naming the model. On the way back it opens
-// the envelope: a provider gets the block as it was produced, and a block is
-// left out of a request to a model that would refuse it. A block without an
-// envelope is Claude's and is never changed.
+// Claude Code keeps the blocks of other models away from a model by itself,
+// but only the signed ones: a block with an empty signature, which is what
+// many providers send, it lets through. So the gateway marks the blocks of
+// third-party models. A block has one field that the client returns exactly
+// as it got it: the signature of a thinking block, the data of a redacted
+// one. In the response of a third-party model that field gets a prefix, and
+// is thereby never empty. On the way back to a provider the prefix is taken
+// off again. A request for a Claude model never carries a marked block,
+// whatever the client does. Claude's own blocks are never changed.
 
-// envelopePrefix starts a value wrapped by the gateway and carries the
-// version of the format. No signature can be taken for an envelope: Claude's
-// are base64, which has no dot.
-const envelopePrefix = "autoclaude.v1."
-
-// envelope is what the gateway puts in place of the value it wraps.
-type envelope struct {
-	// Model is the ID of the model that produced the block.
-	Model string `json:"model"`
-	// Value is what the provider sent in the field.
-	Value string `json:"value"`
-}
-
-// wrap records in a value the model that produced its block.
-func wrap(model, value string) string {
-	payload, _ := json.Marshal(envelope{Model: model, Value: value})
-	return envelopePrefix + base64.RawURLEncoding.EncodeToString(payload)
-}
-
-// unwrap returns the author of a block and the original of the value. A
-// value that is not wrapped has no author to name: the block is Claude's. An
-// envelope that cannot be read has no author either, and nobody takes it.
-func unwrap(value string) (author, original string, wrapped bool) {
-	encoded, wrapped := strings.CutPrefix(value, envelopePrefix)
-	if !wrapped {
-		return "", value, false
-	}
-	var e envelope
-	if payload, err := base64.RawURLEncoding.DecodeString(encoded); err == nil {
-		_ = json.Unmarshal(payload, &e)
-	}
-	return e.Model, e.Value, true
-}
-
-// accepts reports whether the upstream takes a thinking block: of the given
-// author if the block came in an envelope, of Claude otherwise.
-func (u *upstream) accepts(author string, wrapped bool) bool {
-	switch {
-	case !u.thirdParty:
-		return !wrapped
-	case u.verifies:
-		return wrapped && author == u.id
-	default:
-		return !wrapped || author != ""
-	}
-}
+// markPrefix starts the field of a block marked by the gateway and carries
+// the version of the format. No signature of Claude can be taken for a
+// marked one: they are base64, which has no dot.
+const markPrefix = "autoclaude.v1."
 
 // placeholder replaces the content of an assistant turn that is left empty
 // once its thinking blocks are removed: the API rejects empty turns.
@@ -87,20 +40,20 @@ func isThinking(block gjson.Result) bool {
 	return false
 }
 
-// carrier names the field of a thinking block that holds the envelope.
-func carrier(block gjson.Result) string {
+// markedField names the field of a thinking block that carries the mark.
+func markedField(block gjson.Result) string {
 	if block.Get("type").String() == "redacted_thinking" {
 		return "data"
 	}
 	return "signature"
 }
 
-// openEnvelopes prepares the thinking blocks of a request for its upstream:
-// the blocks the upstream accepts get their original values back, the others
-// are removed. Everything else in the body stays byte-for-byte, and so does
-// the whole body of a request that has no envelopes to open.
-func openEnvelopes(body []byte, up *upstream) []byte {
-	if !bytes.Contains(body, []byte(envelopePrefix)) && !(up.thirdParty && up.verifies) {
+// unmark prepares the marked thinking blocks of a request for its upstream:
+// a third-party provider gets them as they were produced, and Anthropic does
+// not get them at all. Everything else in the body stays byte-for-byte, and
+// so does the whole body of a request without marked blocks.
+func unmark(body []byte, thirdParty bool) []byte {
+	if !bytes.Contains(body, []byte(markPrefix)) {
 		return body
 	}
 	var edits []func([]byte) []byte
@@ -120,18 +73,19 @@ func openEnvelopes(body []byte, up *upstream) []byte {
 			if !isThinking(block) {
 				return true
 			}
-			field := carrier(block)
-			author, original, wrapped := unwrap(block.Get(field).String())
+			field := path + "." + markedField(block)
+			original, marked := strings.CutPrefix(block.Get(markedField(block)).String(), markPrefix)
 			switch {
-			case !up.accepts(author, wrapped):
+			case !marked:
+			case thirdParty:
+				blockEdits = append(blockEdits, func(b []byte) []byte {
+					b, _ = sjson.SetBytes(b, field, original)
+					return b
+				})
+			default:
 				removed++
 				blockEdits = append(blockEdits, func(b []byte) []byte {
 					b, _ = sjson.DeleteBytes(b, path)
-					return b
-				})
-			case wrapped:
-				blockEdits = append(blockEdits, func(b []byte) []byte {
-					b, _ = sjson.SetBytes(b, path+"."+field, original)
 					return b
 				})
 			}
