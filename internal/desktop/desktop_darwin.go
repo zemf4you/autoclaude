@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"strings"
 	"text/template"
@@ -70,16 +71,35 @@ func untrust(ca authority) error {
 	return run("security", "delete-certificate", "-Z", ca.sha1, loginKeychain())
 }
 
-func profileInstalled() bool {
+func proxyInstalled() bool {
 	out, _ := exec.Command("profiles", "list").CombinedOutput()
 	return strings.Contains(string(out), profileID)
+}
+
+// installedPAC returns the script address the installed profile carries.
+// macOS keeps the settings of a user's profiles in a preferences file of
+// that user's own.
+func installedPAC() string {
+	account, err := user.Current()
+	if err != nil {
+		return ""
+	}
+	preferences := filepath.Join("/Library/Managed Preferences", account.Username, "com.anthropic.claudefordesktop")
+	out, _ := exec.Command("defaults", "read", preferences, proxySetting).Output()
+	return strings.TrimSpace(string(out))
 }
 
 // setProxy hands the profile to the system. macOS installs profiles only
 // with the user's consent in System Settings, so the pane is opened there.
 func setProxy(pacURL string) error {
-	if profileInstalled() {
-		return nil
+	if proxyInstalled() {
+		if installedPAC() == pacURL {
+			return nil
+		}
+		// The gateway has moved: the profile is replaced.
+		if err := unsetProxy(); err != nil {
+			return err
+		}
 	}
 	file, err := os.CreateTemp("", "autoclaude-*.mobileconfig")
 	if err != nil {
@@ -98,7 +118,7 @@ func setProxy(pacURL string) error {
 }
 
 func unsetProxy() error {
-	if !profileInstalled() {
+	if !proxyInstalled() {
 		return nil
 	}
 	return run("profiles", "remove", "-identifier", profileID)

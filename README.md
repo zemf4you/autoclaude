@@ -74,17 +74,33 @@ base_url = "http://127.0.0.1:8000"
 [[model]]
 id = "deepseek-v4-pro"
 provider = "deepseek"
+name = "DeepSeek V4 Pro" # what to call it in menus
 
 [[model]]
 id = "qwen"
 provider = "local"
 upstream = "Qwen/Qwen3-Coder-30B-A3B-Instruct" # its name at the provider
+name = "Qwen 3 Coder"
 ```
 
 Then run `autoclaude install` again. It lists what it is about to change on
 your machine and asks before it does (`-y` skips the question). That is the
-whole setup. Repeat it whenever the config changes; `autoclaude uninstall`
-undoes all of it. Restart Claude Code and Claude Desktop afterwards.
+whole setup; `autoclaude uninstall` undoes all of it. Restart Claude Code and
+Claude Desktop afterwards.
+
+`autoclaude status` shows, at any time, what is set up, which models are
+configured and whether their providers answer.
+
+### Changing the config
+
+Add, change or remove providers and models in the config, and they apply the
+next time Claude starts: a new Claude Code session, or a restart of Claude
+Desktop. The gateway reads the file at the moment Claude builds its list of
+models, so Claude never offers a model the gateway has stopped serving. A
+session that is still on a model you removed is told so.
+
+`listen` and `desktop_menu` are the exception: they change what is set up on
+your machine, so run `autoclaude install` after changing them.
 
 ### What install does
 
@@ -93,8 +109,9 @@ undoes all of it. Restart Claude Code and Claude Desktop afterwards.
    administrator rights; on Windows, services are system-wide and it does.
    Logs go to `~/.autoclaude/`.
 2. **Points Claude Code at the gateway.** It adds `HTTPS_PROXY` and
-   `NODE_EXTRA_CA_CERTS` to the `env` block of `~/.claude/settings.json` and
-   leaves the rest of the file untouched. This covers the CLI and the Code
+   `NODE_EXTRA_CA_CERTS` to the `env` block of `~/.claude/settings.json`,
+   lists your models under `modelPicker` there, and leaves the rest of the
+   file untouched. This covers the CLI and the Code
    sessions of Claude Desktop. The gateway decrypts connections to
    `api.anthropic.com` only, with a certificate authority created on your
    machine that only Claude Code is told to trust; everything else is
@@ -102,11 +119,10 @@ undoes all of it. Restart Claude Code and Claude Desktop afterwards.
 3. **Sets Claude Desktop up, if `desktop_menu` is on.** See below.
 
 A mistake in the config does not take Claude Code down with the gateway. A
-model or provider that cannot be used is left out, and `autoclaude install`
+model or provider that cannot be used is left out, and `autoclaude status`
 and the gateway's log say which and why; the rest keeps working. If the file
-cannot be read at all, the gateway passes everything to Anthropic. The
-config is read when the gateway starts, so changes apply with the next
-`autoclaude install`.
+cannot be read at all, the gateway keeps the configuration it had, or, when
+starting, passes everything to Anthropic.
 
 The gateway adds your provider keys to requests and passes your subscription
 credentials on to Anthropic, so it only listens on a loopback address and
@@ -114,27 +130,15 @@ refuses requests made by web pages.
 
 ### In the CLI
 
-`/model qwen` and `/model opus` switch back and forth, and
-`claude --model qwen` starts with your model. To see your models in the
-`/model` picker, list them in `~/.claude/settings.json`
-([`modelPicker`](https://code.claude.com/docs/en/settings-reference#modelpicker)):
-
-```json
-{
-  "modelPicker": {
-    "options": [
-      { "model": "qwen", "label": "Qwen 3 Coder", "description": "Local vLLM" }
-    ]
-  }
-}
-```
+Your models are in the `/model` picker under their names; `install` lists
+them there. `/model qwen` and `/model opus` switch back and forth, and
+`claude --model qwen` starts with your model.
 
 ### In Claude Desktop
 
 Desktop gets its model menu from `claude.ai` and lists Claude models only.
 Your models can reach it in one of two ways, and `desktop_menu` in the
-config picks which. A model may carry both a `slot` and a `menu` name; only
-the one that fits the chosen way is used.
+config picks which.
 
 ```toml
 desktop_menu = false
@@ -142,8 +146,8 @@ desktop_menu = false
 [[model]]
 id = "deepseek-v4-pro"
 provider = "deepseek"
-slot = "claude-opus-4-6"  # used when desktop_menu is false
-menu = "DeepSeek V4 Pro"  # used when desktop_menu is true
+name = "DeepSeek V4 Pro"
+slot = "claude-opus-4-6" # the Claude entry it takes while desktop_menu is false
 ```
 
 #### Borrowed entries: `desktop_menu = false`
@@ -151,13 +155,13 @@ menu = "DeepSeek V4 Pro"  # used when desktop_menu is true
 The default. A model takes the menu entry of the Claude model named by its
 `slot`: the entry keeps its name, and your model answers. With the config
 above, choosing *Opus 4.6* talks to DeepSeek. The older models under **More
-models** are good slots.
+models** are good slots. A model without a `slot` is not in the Desktop menu.
 
 Nothing touches `claude.ai`, and no certificate is added to your account.
 
 #### Entries of their own: `desktop_menu = true`
 
-Your models appear in the menu under their `menu` names. For that the
+Your models appear in the menu under their names. For that the
 gateway has to sit on Desktop's connection to `claude.ai` as well, and
 Desktop, unlike Claude Code, trusts only the certificates of your user
 account. So `autoclaude install` does two more things:
@@ -216,6 +220,10 @@ ANTHROPIC_BASE_URL=http://127.0.0.1:8484 claude --model qwen
 
 - A provider has to implement what Claude Code asks of the Messages API:
   streaming, tool use and, for the context meter, `count_tokens`.
+- Claude Code takes a model it does not know to have a 200,000-token
+  context window, and its own setting for that cannot go below 100,000. A
+  local model with a smaller window can overflow before Claude Code compacts
+  the conversation.
 - When Claude Desktop cancels a request to a third-party model before the
   first byte of the answer, the provider keeps generating until it starts
   to respond.

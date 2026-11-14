@@ -25,8 +25,12 @@ const Host = "claude.ai"
 
 // Menu is an http.RoundTripper for the decrypted connection to Host.
 type Menu struct {
-	// Models maps model IDs to the names shown in the menu.
-	Models map[string]string
+	// Models returns the names to show in the menu, by model ID.
+	Models func() map[string]string
+	// Refresh, if set, is called right before the menu is built for
+	// Desktop. Bringing the gateway up to date there means it never offers
+	// a model it cannot serve.
+	Refresh func()
 	// Transport reaches the real host.
 	Transport http.RoundTripper
 }
@@ -71,6 +75,9 @@ func (m *Menu) RoundTrip(r *http.Request) (*http.Response, error) {
 
 // bootstrap adds the models to the menus in the host's start-up response.
 func (m *Menu) bootstrap(r *http.Request) (*http.Response, error) {
+	if m.Refresh != nil {
+		m.Refresh()
+	}
 	r.Header.Del("Accept-Encoding") // the response has to arrive uncompressed
 	resp, err := m.Transport.RoundTrip(r)
 	if err != nil || resp.StatusCode != http.StatusOK {
@@ -130,12 +137,13 @@ func (m *Menu) entries(present []any) []any {
 		known[id] = true
 	}
 	var entries []any
-	for _, id := range slices.Sorted(maps.Keys(m.Models)) {
+	names := m.Models()
+	for _, id := range slices.Sorted(maps.Keys(names)) {
 		if !known[id] {
 			entries = append(entries, map[string]any{
 				"id":           id,
-				"name":         m.Models[id],
-				"short_name":   m.Models[id],
+				"name":         names[id],
+				"short_name":   names[id],
 				"section":      "main",
 				"capabilities": map[string]any{},
 				"thinking":     map[string]any{"type": "none"},
@@ -173,7 +181,7 @@ func (m *Menu) selection(r *http.Request) (*http.Response, error) {
 		Model string `json:"model"`
 	}
 	json.Unmarshal(body, &choice) // an unreadable body names no model of ours
-	if _, ours := m.Models[choice.Model]; !ours {
+	if _, ours := m.Models()[choice.Model]; !ours {
 		r.Body = io.NopCloser(bytes.NewReader(body))
 		return m.Transport.RoundTrip(r)
 	}

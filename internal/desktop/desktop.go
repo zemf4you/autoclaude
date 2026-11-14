@@ -68,6 +68,14 @@ func Disable(certPath string) error {
 	return untrust(ca)
 }
 
+// Status reports the two halves of the Desktop setup: whether the user's
+// account trusts the certificate authority at certPath, and whether Claude
+// Desktop has its proxy setting.
+func Status(certPath string) (certificateTrusted, proxySet bool) {
+	ca, err := readAuthority(certPath)
+	return err == nil && trusted(ca), proxyInstalled()
+}
+
 // Launch starts Claude Desktop with the proxy auto-config script given on
 // its command line. It is the fallback for machines where the proxy setting
 // cannot be installed, such as those whose Claude Desktop is already managed

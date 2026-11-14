@@ -44,9 +44,10 @@ type Model struct {
 	Provider string `toml:"provider"`
 	// Upstream is the model's name at the provider. It defaults to ID.
 	Upstream string `toml:"upstream"`
-	// Menu is the name of the model's own entry in the Desktop menu.
-	// It is used when DesktopMenu is on.
-	Menu string `toml:"menu"`
+	// Name is what the model is called in menus: in the model picker of
+	// the CLI and, when DesktopMenu is on, in the menu of Claude Desktop.
+	// It defaults to ID.
+	Name string `toml:"name"`
 	// Slot is the ID of the Claude model whose entry in the Desktop menu
 	// the model takes. It is used when DesktopMenu is off.
 	Slot string `toml:"slot"`
@@ -63,8 +64,8 @@ func Default() *Config {
 func (c *Config) Menu() map[string]string {
 	names := map[string]string{}
 	for _, m := range c.Models {
-		if c.DesktopMenu && m.Menu != "" {
-			names[m.ID] = m.Menu
+		if c.DesktopMenu {
+			names[m.ID] = m.Name
 		}
 	}
 	return names
@@ -159,6 +160,9 @@ func (c *Config) prune() (warnings []string) {
 		taken[m.ID] = true
 		if m.Upstream == "" {
 			m.Upstream = m.ID
+		}
+		if m.Name == "" {
+			m.Name = m.ID
 		}
 		if m.Slot != "" && taken[m.Slot] {
 			warn("model %q: slot %q is already in use and is ignored", m.ID, m.Slot)

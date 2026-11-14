@@ -29,7 +29,7 @@ base_url = "http://127.0.0.1:8000"
 [[model]]
 id = "deepseek-v4-pro"
 provider = "deepseek"
-menu = "DeepSeek V4 Pro"
+name = "DeepSeek V4 Pro"
 slot = "claude-opus-4-6"
 
 [[model]]
@@ -54,8 +54,8 @@ func TestLoad(t *testing.T) {
 		t.Errorf("api key = %q", got)
 	}
 	want := []Model{
-		{ID: "deepseek-v4-pro", Provider: "deepseek", Upstream: "deepseek-v4-pro", Menu: "DeepSeek V4 Pro", Slot: "claude-opus-4-6"},
-		{ID: "qwen3.5:4b", Provider: "local", Upstream: "Qwen/Qwen3-Coder"},
+		{ID: "deepseek-v4-pro", Provider: "deepseek", Upstream: "deepseek-v4-pro", Name: "DeepSeek V4 Pro", Slot: "claude-opus-4-6"},
+		{ID: "qwen3.5:4b", Provider: "local", Upstream: "Qwen/Qwen3-Coder", Name: "qwen3.5:4b"},
 	}
 	if !slices.Equal(cfg.Models, want) {
 		t.Errorf("models = %+v\nwant     %+v", cfg.Models, want)
@@ -77,7 +77,7 @@ func TestDesktopMenuPicksTheWayIntoTheMenu(t *testing.T) {
 	if got := routes(cfg); !slices.Equal(got, []string{"deepseek-v4-pro", "qwen3.5:4b"}) {
 		t.Errorf("with the menu, the gateway answers to %q", got)
 	}
-	if menu := cfg.Menu(); len(menu) != 1 || menu["deepseek-v4-pro"] != "DeepSeek V4 Pro" {
+	if menu := cfg.Menu(); len(menu) != 2 || menu["deepseek-v4-pro"] != "DeepSeek V4 Pro" || menu["qwen3.5:4b"] != "qwen3.5:4b" {
 		t.Errorf("with the menu, menu = %v", menu)
 	}
 }

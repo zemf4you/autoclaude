@@ -19,8 +19,12 @@ func setProxy(pacURL string) error {
 	return run("reg", "add", policyKey, "/v", proxySetting, "/t", "REG_SZ", "/d", pacURL, "/f")
 }
 
+func proxyInstalled() bool {
+	return succeeds("reg", "query", policyKey, "/v", proxySetting)
+}
+
 func unsetProxy() error {
-	if !succeeds("reg", "query", policyKey, "/v", proxySetting) {
+	if !proxyInstalled() {
 		return nil
 	}
 	return run("reg", "delete", policyKey, "/v", proxySetting, "/f")

@@ -31,6 +31,14 @@ func untrust(ca authority) error {
 	return run("certutil", "-d", nssDatabase(), "-D", "-n", ca.name)
 }
 
+func proxyInstalled() bool {
+	data, _ := os.ReadFile(managedSettings)
+	settings := map[string]any{}
+	json.Unmarshal(data, &settings)
+	_, set := settings[proxySetting]
+	return set
+}
+
 func setProxy(pacURL string) error {
 	return writeSettings(func(settings map[string]any) { settings[proxySetting] = pacURL })
 }

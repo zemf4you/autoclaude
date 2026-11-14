@@ -6,27 +6,24 @@
 //	autoclaude [-config path] install    set everything up for this user
 //	autoclaude [-config path] uninstall  undo install
 //	                                     (both ask first; -y skips the question)
+//	autoclaude [-config path] status     say what is set up and what is not
 //	autoclaude [-config path] desktop    start Claude Desktop with the menu
 //
 // Install registers the gateway as a service that starts at login and points
-// Claude Code at it. With desktop_menu on, it also sets Claude Desktop up
-// for the menu; desktop is the fallback where that is not possible.
+// Claude Code at it. With desktop_menu on, it also sets Claude Desktop up for
+// the menu; desktop is the fallback where that is not possible.
 package main
 
 import (
 	"bufio"
-	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"io/fs"
 	"log/slog"
-	"net"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/kardianos/service"
 
@@ -86,11 +83,11 @@ func run(path, command string, assumeYes bool) error {
 	for _, warning := range warnings {
 		slog.Warn(warning)
 	}
-	dir := filepath.Dir(path)
+	setup := &setup{path: path, dir: filepath.Dir(path), cfg: cfg}
 	// The service belongs to the current user: it needs no administrator
 	// rights where the system has per-user services, and it is restarted
 	// if it ever stops.
-	daemon, err := service.New(&program{cfg: cfg, dir: dir}, &service.Config{
+	setup.daemon, err = service.New(newProgram(path, cfg), &service.Config{
 		Name:        "autoclaude",
 		DisplayName: "AutoClaude",
 		Description: "Gateway between Claude Code and model providers.",
@@ -99,7 +96,7 @@ func run(path, command string, assumeYes bool) error {
 			"UserService":  true,
 			"RunAtLoad":    true,
 			"LogOutput":    true,
-			"LogDirectory": dir,
+			"LogDirectory": setup.dir,
 		},
 	})
 	if err != nil {
@@ -107,28 +104,41 @@ func run(path, command string, assumeYes bool) error {
 	}
 	switch command {
 	case "":
-		return daemon.Run()
+		return setup.daemon.Run()
 	case "install":
-		return install(cfg, dir, daemon, assumeYes)
+		return setup.install(assumeYes)
 	case "uninstall":
-		return uninstall(dir, daemon, assumeYes)
+		return setup.uninstall(assumeYes)
+	case "status":
+		setup.status()
+		return nil
 	case "desktop":
 		return desktop.Launch(menu.PACScript(cfg.Listen))
 	}
 	return fmt.Errorf("unknown command %q", command)
 }
 
+// setup is what autoclaude arranges on the user's machine around the gateway.
+type setup struct {
+	path   string // configuration file
+	dir    string // its directory, which also holds the certificates and logs
+	cfg    *config.Config
+	daemon service.Service
+}
+
+func (s *setup) proxyURL() string     { return "http://" + s.cfg.Listen }
+func (s *setup) menuCertPath() string { return filepath.Join(s.dir, menuCA+".pem") }
+
 // install brings the user's setup in line with the configuration. It says
 // first what it is about to change and goes ahead only on a yes. It can be
 // repeated whenever the configuration changes.
-func install(cfg *config.Config, dir string, daemon service.Service, assumeYes bool) error {
+func (s *setup) install(assumeYes bool) error {
 	settings := claudecode.SettingsPath()
-	withMenu := cfg.DesktopMenu
 
 	fmt.Println("autoclaude will:")
 	fmt.Println("  1. Run the gateway as a service of your account that starts at login.")
-	fmt.Printf("  2. Point Claude Code at it, in %s.\n", settings)
-	if withMenu {
+	fmt.Printf("  2. Point Claude Code at it and list your models in its model picker,\n     in %s.\n", settings)
+	if s.cfg.DesktopMenu {
 		fmt.Println("  3. Give your models entries of their own in the menu of Claude Desktop,")
 		fmt.Println("     as desktop_menu in your config asks. For that it adds a certificate")
 		fmt.Println("     for claude.ai to your account (your system will ask for your password)")
@@ -139,49 +149,149 @@ func install(cfg *config.Config, dir string, daemon service.Service, assumeYes b
 		fmt.Println("     the Claude entries named by their slot. If a certificate and a proxy")
 		fmt.Println("     setting are left from desktop_menu, they are removed.")
 	}
-	fmt.Println("Your models:")
-	for _, m := range cfg.Models {
-		fmt.Printf("  %s, served by %s; in Claude Desktop: %s\n", m.ID, m.Provider, inDesktop(cfg, m))
-	}
-	if len(cfg.Models) == 0 {
-		fmt.Println("  none: every request goes to Anthropic")
-	}
+	s.printModels()
 	if !assumeYes && !confirmed("Continue?") {
 		fmt.Println("Nothing was changed.")
 		return nil
 	}
 
 	// A service installed earlier is replaced.
-	daemon.Stop()
-	daemon.Uninstall()
-	if err := daemon.Install(); err != nil {
+	s.daemon.Stop()
+	s.daemon.Uninstall()
+	if err := s.daemon.Install(); err != nil {
 		return err
 	}
-	if err := daemon.Start(); err != nil {
+	if err := s.daemon.Start(); err != nil {
 		return err
 	}
 	// Claude Code is pointed at the gateway only once it is running.
-	_, caPath, err := proxy.LoadCA(dir, apiCA, gateway.AnthropicHost)
+	_, caPath, err := proxy.LoadCA(s.dir, apiCA, gateway.AnthropicHost)
 	if err != nil {
 		return err
 	}
-	if err := claudecode.Enable(settings, "http://"+cfg.Listen, caPath); err != nil {
+	if err := claudecode.Enable(settings, s.proxyURL(), caPath); err != nil {
 		return err
 	}
-	menuCertPath := filepath.Join(dir, menuCA+".pem")
-	if withMenu {
-		if _, _, err := proxy.LoadCA(dir, menuCA, menu.Host); err != nil {
+	if err := claudecode.SetModels(settings, pickerOptions(s.cfg)); err != nil {
+		return err
+	}
+	if s.cfg.DesktopMenu {
+		if _, _, err := proxy.LoadCA(s.dir, menuCA, menu.Host); err != nil {
 			return err
 		}
-		err = desktop.Enable(menuCertPath, "http://"+cfg.Listen+menu.PACPath)
+		err = desktop.Enable(s.menuCertPath(), s.proxyURL()+menu.PACPath)
 	} else {
-		err = desktop.Disable(menuCertPath)
+		err = desktop.Disable(s.menuCertPath())
 	}
 	if err != nil {
 		return err
 	}
 	fmt.Println(restartNotice)
 	return nil
+}
+
+// uninstall undoes install.
+func (s *setup) uninstall(assumeYes bool) error {
+	fmt.Println("autoclaude will stop its service, take its proxy and its models out of the")
+	fmt.Println("Claude Code settings, and remove its certificate and Claude Desktop setting,")
+	fmt.Println("if any.")
+	if !assumeYes && !confirmed("Continue?") {
+		fmt.Println("Nothing was changed.")
+		return nil
+	}
+	// Claude Code lets go of the gateway before the gateway stops.
+	settings := claudecode.SettingsPath()
+	if err := claudecode.SetModels(settings, nil); err != nil {
+		return err
+	}
+	if err := claudecode.Disable(settings); err != nil {
+		return err
+	}
+	if err := desktop.Disable(s.menuCertPath()); err != nil {
+		return err
+	}
+	s.daemon.Stop() // it may not be running
+	if err := s.daemon.Uninstall(); err != nil {
+		return err
+	}
+	fmt.Println(restartNotice)
+	return nil
+}
+
+// status says what is set up and what is not, and what to do about it.
+func (s *setup) status() {
+	report := func(ok bool, good, bad string) {
+		if ok {
+			fmt.Println("  ok  " + good)
+		} else {
+			fmt.Println("  --  " + bad)
+		}
+	}
+	fmt.Println("Config: " + s.path)
+
+	fmt.Println("Setup:")
+	state, _ := s.daemon.Status()
+	report(state == service.StatusRunning && reachable(s.cfg.Listen),
+		"the gateway is running on "+s.cfg.Listen,
+		"the gateway is not running: run `autoclaude install`")
+	report(claudecode.Enabled(claudecode.SettingsPath(), s.proxyURL()),
+		"Claude Code uses the gateway",
+		"Claude Code does not use the gateway: run `autoclaude install`")
+	trusted, proxied := desktop.Status(s.menuCertPath())
+	switch {
+	case s.cfg.DesktopMenu:
+		report(trusted, "your account trusts the certificate for claude.ai",
+			"your account does not trust the certificate for claude.ai: run `autoclaude install`")
+		report(proxied, "Claude Desktop reaches claude.ai through the gateway",
+			"Claude Desktop has no proxy setting: run `autoclaude install`, or start it with `autoclaude desktop`")
+	case trusted || proxied:
+		report(false, "", "desktop_menu is off, but its certificate or proxy setting is still installed: run `autoclaude install`")
+	default:
+		report(true, "Claude Desktop keeps its standard menu (desktop_menu is off)", "")
+	}
+
+	s.printModels()
+	fmt.Println("Providers:")
+	for name, p := range s.cfg.Providers {
+		report(reachable(hostPort(p.BaseURL)), "provider "+name+" is reachable", "provider "+name+" does not answer at "+p.BaseURL)
+	}
+}
+
+// printModels lists the configured models and how each can be picked in
+// Claude Desktop.
+func (s *setup) printModels() {
+	fmt.Println("Models:")
+	for _, m := range s.cfg.Models {
+		fmt.Printf("  %s, shown as %q, served by %s; in Claude Desktop: %s\n", m.ID, m.Name, m.Provider, inDesktop(s.cfg, m))
+	}
+	if len(s.cfg.Models) == 0 {
+		fmt.Println("  none: every request goes to Anthropic")
+	}
+}
+
+// inDesktop says how a model can be picked in Claude Desktop.
+func inDesktop(cfg *config.Config, m config.Model) string {
+	switch {
+	case cfg.DesktopMenu:
+		return "its own entry"
+	case m.Slot != "":
+		return "in place of " + m.Slot
+	}
+	return "not shown, the model has no slot"
+}
+
+// pickerOptions returns the entries of the CLI's model picker for the models
+// of a configuration.
+func pickerOptions(cfg *config.Config) []claudecode.Option {
+	options := make([]claudecode.Option, 0, len(cfg.Models))
+	for _, m := range cfg.Models {
+		options = append(options, claudecode.Option{
+			Model:       m.ID,
+			Label:       m.Name,
+			Description: claudecode.Description(m.Provider),
+		})
+	}
+	return options
 }
 
 // confirmed asks a yes-or-no question on the terminal. Anything but a yes,
@@ -194,97 +304,4 @@ func confirmed(question string) bool {
 		return true
 	}
 	return false
-}
-
-// uninstall undoes install.
-func uninstall(dir string, daemon service.Service, assumeYes bool) error {
-	fmt.Println("autoclaude will stop its service, take its proxy out of the Claude Code")
-	fmt.Println("settings, and remove its certificate and Claude Desktop setting, if any.")
-	if !assumeYes && !confirmed("Continue?") {
-		fmt.Println("Nothing was changed.")
-		return nil
-	}
-	// Claude Code lets go of the gateway before the gateway stops.
-	if err := claudecode.Disable(claudecode.SettingsPath()); err != nil {
-		return err
-	}
-	if err := desktop.Disable(filepath.Join(dir, menuCA+".pem")); err != nil {
-		return err
-	}
-	daemon.Stop() // it may not be running
-	if err := daemon.Uninstall(); err != nil {
-		return err
-	}
-	fmt.Println(restartNotice)
-	return nil
-}
-
-// program is the gateway as the service manager runs it.
-type program struct {
-	cfg    *config.Config
-	dir    string
-	server *http.Server
-}
-
-// Start brings the gateway up and returns; the manager expects that.
-func (p *program) Start(service.Service) error {
-	api := gateway.New(p.cfg)
-	ca, caPath, err := proxy.LoadCA(p.dir, apiCA, gateway.AnthropicHost)
-	if err != nil {
-		return err
-	}
-	direct := http.NewServeMux()
-	direct.Handle("/", proxy.API(api))
-	interceptions := []proxy.Interception{{Host: gateway.AnthropicHost, CA: ca, Handler: api}}
-	if p.cfg.DesktopMenu {
-		ca, _, err := proxy.LoadCA(p.dir, menuCA, menu.Host)
-		if err != nil {
-			return err
-		}
-		direct.Handle("GET "+menu.PACPath, menu.PAC(p.cfg.Listen))
-		interceptions = append(interceptions, proxy.Interception{
-			Host:    menu.Host,
-			CA:      ca,
-			Handler: &menu.Menu{Models: p.cfg.Menu(), Transport: gateway.DirectTransport()},
-		})
-	}
-	listener, err := net.Listen("tcp", p.cfg.Listen)
-	if err != nil {
-		return err
-	}
-	slog.Info("gateway started", "listen", p.cfg.Listen, "ca", caPath, "desktop menu", p.cfg.DesktopMenu)
-	for _, m := range p.cfg.Models {
-		slog.Info("model", "id", m.ID, "provider", m.Provider, "upstream", m.Upstream, "in Desktop", inDesktop(p.cfg, m))
-	}
-	p.server = &http.Server{
-		Handler:           proxy.New(direct, interceptions...),
-		ReadHeaderTimeout: 10 * time.Second,
-	}
-	go func() {
-		if err := p.server.Serve(listener); !errors.Is(err, http.ErrServerClosed) {
-			slog.Error(err.Error())
-			os.Exit(1)
-		}
-	}()
-	return nil
-}
-
-// inDesktop says how a model can be picked in Claude Desktop.
-func inDesktop(cfg *config.Config, m config.Model) string {
-	switch {
-	case cfg.DesktopMenu && m.Menu != "":
-		return fmt.Sprintf("menu entry %q", m.Menu)
-	case !cfg.DesktopMenu && m.Slot != "":
-		return "in place of " + m.Slot
-	case cfg.DesktopMenu:
-		return "not shown: the model has no menu name"
-	}
-	return "not shown: the model has no slot"
-}
-
-// Stop shuts the gateway down, giving requests in flight a moment to finish.
-func (p *program) Stop(service.Service) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	return p.server.Shutdown(ctx)
 }

@@ -53,3 +53,51 @@ func TestEnableCreatesTheFile(t *testing.T) {
 		t.Errorf("Disable without a file: %v", err)
 	}
 }
+
+func TestSetModels(t *testing.T) {
+	const original = `{"modelPicker":{"options":[{"model":"mine","label":"Mine"}],"replaceBuiltInOptions":false}}`
+	path := filepath.Join(t.TempDir(), "settings.json")
+	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	models := func() string {
+		settings, _ := os.ReadFile(path)
+		return gjson.GetBytes(settings, "modelPicker.options.#.model").String()
+	}
+	option := func(id string) Option {
+		return Option{Model: id, Label: id, Description: Description("local")}
+	}
+
+	if err := SetModels(path, []Option{option("qwen"), option("glm")}); err != nil {
+		t.Fatal(err)
+	}
+	if got := models(); got != `["mine","qwen","glm"]` {
+		t.Errorf("after adding two: %s", got)
+	}
+	// A later set replaces ours and keeps the user's.
+	if err := SetModels(path, []Option{option("glm")}); err != nil {
+		t.Fatal(err)
+	}
+	if got := models(); got != `["mine","glm"]` {
+		t.Errorf("after replacing: %s", got)
+	}
+	if err := SetModels(path, nil); err != nil {
+		t.Fatal(err)
+	}
+	if settings, _ := os.ReadFile(path); models() != `["mine"]` || !gjson.GetBytes(settings, "modelPicker.replaceBuiltInOptions").Exists() {
+		t.Errorf("after removing: %s", settings)
+	}
+}
+
+func TestSetModelsLeavesNothingBehind(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	if err := SetModels(path, nil); err != nil {
+		t.Errorf("nothing to remove and no file: %v", err)
+	}
+	os.WriteFile(path, []byte(`{"model":"opus"}`), 0o644)
+	SetModels(path, []Option{{Model: "qwen", Label: "Qwen", Description: Description("local")}})
+	SetModels(path, nil)
+	if settings, _ := os.ReadFile(path); string(settings) != `{"model":"opus"}` {
+		t.Errorf("settings = %s", settings)
+	}
+}

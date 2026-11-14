@@ -1,7 +1,9 @@
 # AutoClaude configuration.
 #
 # Lines that start with "#" right before a setting are examples: remove the
-# "#" to turn them on. After any change, run `autoclaude install` again.
+# "#" to turn them on. Changes to providers and models are picked up the next
+# time Claude starts; after changing listen or desktop_menu, run
+# `autoclaude install` again. `autoclaude status` shows how things stand.
 #
 # Keep this file private: it holds your provider keys.
 
@@ -12,18 +14,17 @@ listen = "127.0.0.1:8484"
 # ── Claude Desktop ───────────────────────────────────────────────────────────
 #
 # Claude Desktop lists only Claude models. Your models can reach its menu in
-# one of two ways, and desktop_menu picks which. A model may carry both a
-# `slot` and a `menu`; only the one that fits the chosen way is used. A model
-# with neither stays out of the Desktop menu and works everywhere else.
+# one of two ways, and desktop_menu picks which. This concerns Desktop only:
+# in the CLI your models are in the `/model` picker either way.
 #
 # desktop_menu = false (the default): borrowed entries, no certificate.
 #   A model takes the menu entry of the Claude model named by its `slot`: the
-#   entry keeps its name and your model answers. The entries under "More
-#   models" are good slots: claude-opus-4-6, claude-opus-4-7, claude-opus-4-8,
+#   entry keeps its name and your model answers. A model without a slot is
+#   not in the Desktop menu. The entries under "More models" are good slots: claude-opus-4-6, claude-opus-4-7, claude-opus-4-8,
 #   claude-sonnet-4-6, claude-opus-5, claude-sonnet-5, claude-fable-5,
 #   claude-fable-5-1, claude-haiku-4-5-20251001.
 #
-# desktop_menu = true: entries of their own, under the `menu` names.
+# desktop_menu = true: entries of their own, under the models' names.
 #   `autoclaude install` then adds a certificate for claude.ai to your user
 #   account, asking for your password, and puts the gateway between Claude
 #   Desktop and claude.ai. Anthropic does not support this: read "Anthropic's
@@ -61,18 +62,19 @@ desktop_menu = false
 #   id         what you pick in Claude Code: `/model deepseek-v4-pro`
 #   provider   the name of one of the providers above
 #   upstream   the model's name at the provider, if it differs from id
-#   menu       for Claude Desktop, see below
-#   slot       for Claude Desktop, see below
+#   name       what to call the model in menus; the id if left out
+#   slot       the Claude model whose place it takes in Claude Desktop while
+#              desktop_menu is false; see above
 
 #[[model]]
 #id = "deepseek-v4-pro"
 #provider = "deepseek"
-#menu = "DeepSeek V4 Pro"
+#name = "DeepSeek V4 Pro"
 #slot = "claude-opus-4-6"
 
 #[[model]]
 #id = "qwen"
 #provider = "local"
 #upstream = "Qwen/Qwen3-Coder-30B-A3B-Instruct"
-#menu = "Qwen 3 Coder"
+#name = "Qwen 3 Coder"
 #slot = "claude-sonnet-4-6"

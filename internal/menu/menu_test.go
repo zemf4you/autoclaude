@@ -28,7 +28,10 @@ func host(t *testing.T) *httptest.Server {
 }
 
 func do(t *testing.T, method, url, body string) (int, string) {
-	m := &Menu{Models: map[string]string{"qwen": "Qwen", "taken": "Ignored"}, Transport: http.DefaultTransport}
+	names := map[string]string{"qwen": "Qwen", "taken": "Ignored"}
+	m := &Menu{Models: func() map[string]string { return names }, Transport: http.DefaultTransport}
+	// The configuration is refreshed right before the menu is built from it.
+	m.Refresh = func() { names["fresh"] = "Fresh" }
 	r, _ := http.NewRequest(method, url, strings.NewReader(body))
 	resp, err := m.RoundTrip(r)
 	if err != nil {
@@ -42,7 +45,7 @@ func do(t *testing.T, method, url, body string) (int, string) {
 func TestModelsAreAddedToCodeMenus(t *testing.T) {
 	_, out := do(t, http.MethodGet, host(t).URL+"/api/bootstrap/org/app_start", "")
 
-	if got := gjson.Get(out, `model_selector_config.#(id=="cc").models.#.id`).String(); got != `["claude-opus-5-5","taken","qwen"]` {
+	if got := gjson.Get(out, `model_selector_config.#(id=="cc").models.#.id`).String(); got != `["claude-opus-5-5","taken","fresh","qwen"]` {
 		t.Errorf("code menu = %s", got)
 	}
 	if got := gjson.Get(out, `model_selector_config.#(id=="cc").models.#(id=="qwen").name`).String(); got != "Qwen" {

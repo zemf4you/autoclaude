@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strconv"
 	"sync"
+	"sync/atomic"
 
 	"github.com/tidwall/gjson"
 
@@ -36,7 +37,13 @@ type upstream struct {
 // the gateway or intercepted on its way to Anthropic.
 type Gateway struct {
 	anthropic *upstream
-	models    map[string]*upstream
+	// models holds the upstream of every model ID the gateway answers to.
+	// Configure replaces it as a whole while requests are being served.
+	models atomic.Pointer[map[string]*upstream]
+	// retired holds the model IDs the gateway used to answer to. A client
+	// that still names one is told so, instead of being sent to Anthropic
+	// with a model Anthropic has never heard of.
+	retired   sync.Map
 	transport http.RoundTripper
 	// rejected holds the tool loops, keyed by session and model, whose
 	// history the provider has refused to take with thinking blocks.
@@ -47,12 +54,20 @@ type Gateway struct {
 func New(cfg *config.Config) *Gateway {
 	g := &Gateway{
 		anthropic: &upstream{name: "anthropic", url: baseURL("https://" + AnthropicHost)},
-		models:    map[string]*upstream{},
 		transport: DirectTransport(),
 	}
+	g.Configure(cfg)
+	return g
+}
+
+// Configure makes the gateway serve the models of cfg. It may be called
+// while the gateway is in use: requests in flight finish on the models they
+// started with.
+func (g *Gateway) Configure(cfg *config.Config) {
+	models := map[string]*upstream{}
 	for id, m := range cfg.Routes() {
 		p := cfg.Providers[m.Provider]
-		g.models[id] = &upstream{
+		models[id] = &upstream{
 			name:       m.Provider,
 			url:        baseURL(p.BaseURL),
 			thirdParty: true,
@@ -60,7 +75,16 @@ func New(cfg *config.Config) *Gateway {
 			model:      m.Upstream,
 		}
 	}
-	return g
+	if old := g.models.Swap(&models); old != nil {
+		for id := range *old {
+			if _, kept := models[id]; !kept {
+				g.retired.Store(id, struct{}{})
+			}
+		}
+	}
+	for id := range models {
+		g.retired.Delete(id)
+	}
 }
 
 // DirectTransport returns a transport that ignores the proxy environment.
@@ -93,8 +117,11 @@ func (g *Gateway) RoundTrip(r *http.Request) (*http.Response, error) {
 	}
 	model := gjson.GetBytes(body, "model").String()
 	up, owner := g.anthropic, "" // unmarked thinking blocks belong to Claude
-	if u, ok := g.models[model]; ok {
+	if u, ok := (*g.models.Load())[model]; ok {
 		up, owner = u, model
+	} else if _, gone := g.retired.Load(model); gone {
+		slog.Warn("request for a model that is no longer configured", "model", model)
+		return removed(r, model), nil
 	}
 	if up.thirdParty {
 		if continuesThread(body) {

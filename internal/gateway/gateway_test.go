@@ -275,3 +275,38 @@ func TestRejectionIsRememberedUntilTheToolLoopEnds(t *testing.T) {
 		}
 	}
 }
+
+// A model taken out of the configuration may still be on offer in a client
+// that listed it earlier. Such a client is told what happened.
+func TestRemovedModelIsReported(t *testing.T) {
+	claude, provider := newFake(t), newFake(t)
+	cfg := &config.Config{
+		Providers: map[string]config.Provider{"local": {BaseURL: provider.URL}},
+		Models:    []config.Model{{ID: "qwen", Provider: "local", Upstream: "qwen"}},
+	}
+	g := New(cfg)
+	g.anthropic.url = baseURL(claude.URL)
+	server := httptest.NewServer(&httputil.ReverseProxy{Rewrite: func(*httputil.ProxyRequest) {}, Transport: g})
+	t.Cleanup(server.Close)
+
+	g.Configure(&config.Config{})
+	status, out := post(t, server.URL, `{"model":"qwen","messages":[]}`)
+	if status != http.StatusNotFound || !strings.Contains(out, "removed from the configuration") {
+		t.Errorf("status %d, response %s", status, out)
+	}
+	if len(claude.requests())+len(provider.requests()) != 0 {
+		t.Error("the request was sent on")
+	}
+
+	// A model the gateway never served is none of its business.
+	post(t, server.URL, `{"model":"claude-opus","messages":[]}`)
+	if len(claude.requests()) != 1 {
+		t.Error("an unknown model did not go to Anthropic")
+	}
+
+	// Put back, the model is served again.
+	g.Configure(cfg)
+	if status, _ := post(t, server.URL, `{"model":"qwen","messages":[]}`); status != http.StatusOK || len(provider.requests()) != 1 {
+		t.Errorf("after the model came back: status %d, provider requests %d", status, len(provider.requests()))
+	}
+}

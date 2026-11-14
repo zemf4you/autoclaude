@@ -1,6 +1,8 @@
 package gateway
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -57,16 +59,31 @@ func continuesThread(body []byte) bool {
 // whole for the rest of the session (observed with Claude Code 2.1.321: it
 // treats any 400 that mentions "thread:" as the server declining threads).
 func stateless(r *http.Request) *http.Response {
-	const body = `{"type":"error","error":{"type":"invalid_request_error",` +
-		`"message":"thread: this model keeps no conversation state, send the whole history"}}`
+	return failure(r, http.StatusBadRequest, "invalid_request_error",
+		"thread: this model keeps no conversation state, send the whole history")
+}
+
+// removed tells the client that the model it asked for has been taken out of
+// the configuration since it was offered.
+func removed(r *http.Request, model string) *http.Response {
+	return failure(r, http.StatusNotFound, "not_found_error",
+		fmt.Sprintf("autoclaude: the model %q has been removed from the configuration; pick another model", model))
+}
+
+// failure builds an error response in the format of the Messages API.
+func failure(r *http.Request, status int, kind, message string) *http.Response {
+	body, _ := json.Marshal(map[string]any{
+		"type":  "error",
+		"error": map[string]string{"type": kind, "message": message},
+	})
 	return &http.Response{
-		Status:        "400 Bad Request",
-		StatusCode:    http.StatusBadRequest,
+		Status:        fmt.Sprintf("%d %s", status, http.StatusText(status)),
+		StatusCode:    status,
 		Proto:         "HTTP/1.1",
 		ProtoMajor:    1,
 		ProtoMinor:    1,
 		Header:        http.Header{"Content-Type": {"application/json"}},
-		Body:          io.NopCloser(strings.NewReader(body)),
+		Body:          io.NopCloser(bytes.NewReader(body)),
 		ContentLength: int64(len(body)),
 		Request:       r,
 	}
