@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/tidwall/gjson"
@@ -19,6 +21,8 @@ const billingHeader = "x-anthropic-billing-header:"
 // portable rewrites a request into the form third-party providers accept:
 //
 //   - The model is addressed by the name the provider knows it under.
+//   - The fields configured for the model are added. They never replace the
+//     model: that is how the gateway routes.
 //   - Claude Code puts messages with the system role in the middle of the
 //     history, which the Anthropic API allows. The chat templates of many
 //     models allow a system message only first and reject the request
@@ -29,7 +33,10 @@ const billingHeader = "x-anthropic-billing-header:"
 //   - The fields that drive Anthropic's server-side history mean nothing to
 //     another provider, and metadata carries account and device identifiers.
 //     They are removed too.
-func portable(body []byte, model string) []byte {
+func portable(body []byte, model string, extra map[string]any) []byte {
+	for _, field := range slices.Sorted(maps.Keys(extra)) {
+		body, _ = sjson.SetBytes(body, gjson.Escape(field), extra[field])
+	}
 	body, _ = sjson.SetBytes(body, "model", model)
 	for i, message := range gjson.GetBytes(body, "messages").Array() {
 		if message.Get("role").String() == "system" {

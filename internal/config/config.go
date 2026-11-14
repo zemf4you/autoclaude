@@ -58,6 +58,9 @@ type Model struct {
 	// Slot is the ID of the Claude model whose entry in the Desktop menu
 	// the model takes. It is used with Slots.
 	Slot string `toml:"slot"`
+	// ExtraBody holds fields to add to every request for the model: the
+	// options a provider takes beyond the Messages API.
+	ExtraBody map[string]any `toml:"extra_body"`
 }
 
 // The ways for models to reach the model menu of Claude Desktop.
@@ -177,6 +180,9 @@ func Load(path string) (cfg *Config, warnings []string, err error) {
 		cfg.ContextWindow = 0
 	}
 	for _, key := range meta.Undecoded() {
+		if len(key) > 2 && key[0] == "model" && key[1] == "extra_body" {
+			continue // what extra_body holds is the provider's to understand
+		}
 		warnings = append(warnings, fmt.Sprintf("unknown setting %q is ignored", key))
 	}
 	return cfg, append(warnings, cfg.prune()...), nil

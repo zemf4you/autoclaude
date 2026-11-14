@@ -70,11 +70,32 @@ to Anthropic on your subscription.
 | `name` | What to call the model in menus. The `id` if left out |
 | `context` | Its context window in tokens, from 100000 to 10000000. Claude Code shows it and compacts the conversation by it |
 | `slot` | With `desktop = "slots"`: the Claude model whose entry in Desktop's menu it takes |
+| `extra_body` | Fields to add to every request for the model: the options its provider takes beyond the Messages API |
 
 Good slots are the older models under **More models** in Desktop's menu:
 `claude-opus-4-6`, `claude-opus-4-7`, `claude-opus-4-8`, `claude-sonnet-4-6`,
 `claude-opus-5`, `claude-sonnet-5`, `claude-fable-5`, `claude-fable-5-1`,
 `claude-haiku-4-5-20251001`.
+
+## OpenRouter
+
+OpenRouter spreads the requests for a model over the companies that host it,
+and each host has a prompt cache of its own. Claude Code sends the whole
+conversation with every request, so without the cache every message costs
+the full price. Keep a model on one host:
+
+```toml
+[[model]]
+id = "deepseek-v4.1-flash"
+provider = "openrouter"
+upstream = "deepseek/deepseek-v4.1-flash"
+extra_body = { provider = { only = ["DeepInfra"] } }
+```
+
+The hosts of a model, their prices and what else `provider` takes are in
+OpenRouter's [provider routing](https://openrouter.ai/docs/features/provider-routing)
+guide. OpenRouter does not count tokens ahead of a request, which Claude Code
+asks for; the conversation is not affected.
 
 ## Mistakes
 

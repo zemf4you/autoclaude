@@ -49,7 +49,8 @@ func (f *fake) requests() []string {
 }
 
 // setup starts a gateway in front of a fake Anthropic and a fake provider
-// that serves "qwen" and, under the name "org/qwen-4b", "claude-haiku".
+// that serves "qwen", under the name "org/qwen-4b" "claude-haiku", and
+// "pinned", which has fields of its own to add to requests.
 func setup(t *testing.T) (gatewayURL string, claude, provider *fake) {
 	claude, provider = newFake(t), newFake(t)
 	g := New(&config.Config{
@@ -57,6 +58,9 @@ func setup(t *testing.T) (gatewayURL string, claude, provider *fake) {
 		Models: []config.Model{
 			{ID: "qwen", Provider: "local", Upstream: "qwen"},
 			{ID: "claude-haiku", Provider: "local", Upstream: "org/qwen-4b"},
+			{ID: "pinned", Provider: "local", Upstream: "org/pinned", ExtraBody: map[string]any{
+				"provider": map[string]any{"only": []any{"host"}}, "model": "other", "top.k": int64(5),
+			}},
 		},
 	})
 	g.anthropic.url = baseURL(claude.URL)
@@ -150,6 +154,18 @@ func TestProviderRequest(t *testing.T) {
 	}
 	if h.Get("X-Claude-Code-Session-Id") != "" {
 		t.Errorf("provider got client identifiers: %v", h)
+	}
+}
+
+// The fields configured for a model go out with every request for it, and
+// cannot change where the request is routed.
+func TestProviderRequestCarriesConfiguredFields(t *testing.T) {
+	gw, _, provider := setup(t)
+	post(t, gw, `{"model":"pinned","messages":[]}`)
+
+	want := `{"model":"org/pinned","messages":[],"provider":{"only":["host"]},"top.k":5}`
+	if got := provider.requests()[0]; got != want {
+		t.Errorf("provider got %s\nwant         %s", got, want)
 	}
 }
 

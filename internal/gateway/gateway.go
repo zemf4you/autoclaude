@@ -30,6 +30,9 @@ type upstream struct {
 	key        string
 	// model is the model's name at a third-party provider.
 	model string
+	// extra holds the fields a third-party provider is sent on top of the
+	// client's request.
+	extra map[string]any
 }
 
 // Gateway sends a Claude Code request to the provider of its model. It is an
@@ -73,6 +76,7 @@ func (g *Gateway) Configure(cfg *config.Config) {
 			thirdParty: true,
 			key:        p.APIKey,
 			model:      m.Upstream,
+			extra:      m.ExtraBody,
 		}
 	}
 	if old := g.models.Swap(&models); old != nil {
@@ -128,7 +132,7 @@ func (g *Gateway) RoundTrip(r *http.Request) (*http.Response, error) {
 			slog.Info("asked for the whole history", "model", model)
 			return stateless(r), nil
 		}
-		body = portable(body, up.model)
+		body = portable(body, up.model, up.extra)
 	}
 	body, mixed := native(body, owner)
 
