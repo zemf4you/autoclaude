@@ -1,6 +1,7 @@
 package config
 
 import (
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -9,7 +10,7 @@ import (
 	"testing"
 )
 
-func load(t *testing.T, content string) (*Config, error) {
+func load(t *testing.T, content string) (*Config, []string, error) {
 	path := filepath.Join(t.TempDir(), "config.toml")
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
@@ -17,8 +18,7 @@ func load(t *testing.T, content string) (*Config, error) {
 	return Load(path)
 }
 
-func TestLoad(t *testing.T) {
-	cfg, err := load(t, `
+const twoModels = `
 [providers.deepseek]
 base_url = "https://api.deepseek.com/anthropic"
 api_key = "sk-$ecret"
@@ -30,14 +30,22 @@ base_url = "http://127.0.0.1:8000"
 id = "deepseek-v4-pro"
 provider = "deepseek"
 menu = "DeepSeek V4 Pro"
+slot = "claude-opus-4-6"
 
 [[model]]
 id = "qwen3.5:4b"
 provider = "local"
 upstream = "Qwen/Qwen3-Coder"
-`)
-	if err != nil {
-		t.Fatal(err)
+`
+
+func routes(cfg *Config) []string {
+	return slices.Sorted(maps.Keys(cfg.Routes()))
+}
+
+func TestLoad(t *testing.T) {
+	cfg, warnings, err := load(t, twoModels)
+	if err != nil || len(warnings) != 0 {
+		t.Fatalf("warnings %q, error %v", warnings, err)
 	}
 	if cfg.Listen != "127.0.0.1:8484" {
 		t.Errorf("default listen = %q", cfg.Listen)
@@ -46,50 +54,110 @@ upstream = "Qwen/Qwen3-Coder"
 		t.Errorf("api key = %q", got)
 	}
 	want := []Model{
-		{ID: "deepseek-v4-pro", Provider: "deepseek", Upstream: "deepseek-v4-pro", Menu: "DeepSeek V4 Pro"},
+		{ID: "deepseek-v4-pro", Provider: "deepseek", Upstream: "deepseek-v4-pro", Menu: "DeepSeek V4 Pro", Slot: "claude-opus-4-6"},
 		{ID: "qwen3.5:4b", Provider: "local", Upstream: "Qwen/Qwen3-Coder"},
 	}
 	if !slices.Equal(cfg.Models, want) {
 		t.Errorf("models = %+v\nwant     %+v", cfg.Models, want)
 	}
+}
+
+// A model may carry a slot and a menu name at once; desktop_menu decides
+// which of the two is in force.
+func TestDesktopMenuPicksTheWayIntoTheMenu(t *testing.T) {
+	cfg, _, _ := load(t, twoModels)
+	if got := routes(cfg); !slices.Equal(got, []string{"claude-opus-4-6", "deepseek-v4-pro", "qwen3.5:4b"}) {
+		t.Errorf("with slots, the gateway answers to %q", got)
+	}
+	if len(cfg.Menu()) != 0 {
+		t.Errorf("with slots, menu = %v", cfg.Menu())
+	}
+
+	cfg, _, _ = load(t, "desktop_menu = true\n"+twoModels)
+	if got := routes(cfg); !slices.Equal(got, []string{"deepseek-v4-pro", "qwen3.5:4b"}) {
+		t.Errorf("with the menu, the gateway answers to %q", got)
+	}
 	if menu := cfg.Menu(); len(menu) != 1 || menu["deepseek-v4-pro"] != "DeepSeek V4 Pro" {
-		t.Errorf("menu = %v", menu)
+		t.Errorf("with the menu, menu = %v", menu)
 	}
 }
 
-// The example is what a new user starts from: it has to load as it is, and
-// again with every example setting turned on.
+// The example is what a new user starts from: it has to load cleanly as it
+// is, and again with every example setting turned on.
 func TestExample(t *testing.T) {
-	if _, err := load(t, string(Example)); err != nil {
-		t.Fatalf("as shipped: %v", err)
+	if _, warnings, err := load(t, string(Example)); err != nil || len(warnings) != 0 {
+		t.Fatalf("as shipped: warnings %q, error %v", warnings, err)
 	}
 	on := regexp.MustCompile(`(?m)^#([^ #\n])`).ReplaceAllString(string(Example), "$1")
-	cfg, err := load(t, on)
-	if err != nil {
-		t.Fatalf("with the examples on: %v", err)
+	cfg, warnings, err := load(t, on)
+	if err != nil || len(warnings) != 0 {
+		t.Fatalf("with the examples on: warnings %q, error %v", warnings, err)
 	}
-	if len(cfg.Providers) != 3 || len(cfg.Models) != 2 || len(cfg.Menu()) != 2 {
-		t.Errorf("providers %d, models %d, menu %d", len(cfg.Providers), len(cfg.Models), len(cfg.Menu()))
+	if len(cfg.Providers) != 3 || len(cfg.Models) != 2 || len(cfg.Routes()) != 4 {
+		t.Errorf("providers %d, models %d, routes %d", len(cfg.Providers), len(cfg.Models), len(cfg.Routes()))
 	}
 }
 
-func TestLoadRejectsMistakes(t *testing.T) {
-	const provider = "[providers.local]\nbase_url = \"http://127.0.0.1:8000\"\n"
-	model := func(id, extra string) string {
-		return "[[model]]\nid = \"" + id + "\"\nprovider = \"local\"\n" + extra
+// A mistake in one entry costs that entry, not the gateway.
+func TestMistakesAreLeftOutWithAWarning(t *testing.T) {
+	cfg, warnings, err := load(t, `
+listn = ":1"
+
+[providers.local]
+base_url = "http://127.0.0.1:8000"
+
+[providers.broken]
+base_url = "localhost:8000"
+
+[[model]]
+id = "good"
+provider = "local"
+slot = "claude-opus-4-6"
+
+[[model]]
+id = "my model"
+provider = "local"
+
+[[model]]
+id = "good"
+provider = "local"
+
+[[model]]
+id = "orphan"
+provider = "broken"
+
+[[model]]
+id = "second"
+provider = "local"
+slot = "claude-opus-4-6"
+`)
+	if err != nil {
+		t.Fatal(err)
 	}
-	cases := map[string]string{
-		"unknown key":      `listn = ":1"`,
-		"loopback":         `listen = "0.0.0.0:8484"`,
-		"unknown provider": model("qwen", ""),
-		"base_url":         "[providers.local]\nbase_url = \"localhost:8000\"",
-		"whitespace":       provider + model("my model", ""),
-		"listed twice":     provider + model("qwen", "") + model("qwen", ""),
-		"cannot take":      provider + model("qwen", "menu = \"Qwen\"\n") + model("claude-opus-4-6", ""),
+	if got := routes(cfg); !slices.Equal(got, []string{"claude-opus-4-6", "good", "second"}) {
+		t.Errorf("the gateway answers to %q", got)
 	}
-	for want, content := range cases {
-		if _, err := load(t, content); err == nil || !strings.Contains(err.Error(), want) {
-			t.Errorf("want error containing %q, got %v", want, err)
+	if cfg.Routes()["claude-opus-4-6"].ID != "good" {
+		t.Error("a slot goes to the first model that names it")
+	}
+	for _, want := range []string{`"listn"`, `"broken"`, `"my model"`, `"good" is ignored`, `"orphan"`, `slot "claude-opus-4-6"`} {
+		if !slices.ContainsFunc(warnings, func(w string) bool { return strings.Contains(w, want) }) {
+			t.Errorf("no warning mentions %s in %q", want, warnings)
+		}
+	}
+	if len(warnings) != 6 {
+		t.Errorf("%d warnings, want 6: %q", len(warnings), warnings)
+	}
+}
+
+func TestUnusableFileIsAnError(t *testing.T) {
+	for name, content := range map[string]string{
+		"not TOML":        `listen = `,
+		"public address":  `listen = "0.0.0.0:8484"`,
+		"missing address": `listen = "8484"`,
+	} {
+		if _, _, err := load(t, content); err == nil {
+			t.Errorf("%s: no error", name)
 		}
 	}
 }

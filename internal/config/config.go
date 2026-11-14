@@ -17,6 +17,10 @@ import (
 type Config struct {
 	// Listen is the loopback address the gateway accepts requests on.
 	Listen string `toml:"listen"`
+	// DesktopMenu chooses how the models reach the model menu of Claude
+	// Desktop: as entries of their own (true), which needs a certificate
+	// in the user's trust store, or in place of Claude models (false).
+	DesktopMenu bool `toml:"desktop_menu"`
 	// Providers are third-party Anthropic-compatible providers by name.
 	Providers map[string]Provider `toml:"providers"`
 	// Models are the models served by the providers. A model that is not
@@ -40,22 +44,45 @@ type Model struct {
 	Provider string `toml:"provider"`
 	// Upstream is the model's name at the provider. It defaults to ID.
 	Upstream string `toml:"upstream"`
-	// Menu is the name of the model's own entry in the model menu of
-	// Claude Desktop. It is optional, and needs a certificate in the
-	// user's trust store; see the README.
+	// Menu is the name of the model's own entry in the Desktop menu.
+	// It is used when DesktopMenu is on.
 	Menu string `toml:"menu"`
+	// Slot is the ID of the Claude model whose entry in the Desktop menu
+	// the model takes. It is used when DesktopMenu is off.
+	Slot string `toml:"slot"`
 }
 
-// Menu returns the names of the models that get an entry of their own in
-// the menu of Claude Desktop, by model ID.
+// Default returns the configuration of a gateway that knows no models and
+// passes everything to Anthropic.
+func Default() *Config {
+	return &Config{Listen: "127.0.0.1:8484"}
+}
+
+// Menu returns the names of the models' own entries in the Desktop menu, by
+// model ID. It is empty unless DesktopMenu is on.
 func (c *Config) Menu() map[string]string {
 	names := map[string]string{}
 	for _, m := range c.Models {
-		if m.Menu != "" {
+		if c.DesktopMenu && m.Menu != "" {
 			names[m.ID] = m.Menu
 		}
 	}
 	return names
+}
+
+// Routes returns the model for every model ID the gateway answers to: the
+// models' own IDs and, unless DesktopMenu is on, the Claude IDs they take.
+func (c *Config) Routes() map[string]Model {
+	routes := map[string]Model{}
+	for _, m := range c.Models {
+		routes[m.ID] = m
+	}
+	for _, m := range c.Models {
+		if !c.DesktopMenu && m.Slot != "" {
+			routes[m.Slot] = m
+		}
+	}
+	return routes
 }
 
 // Example is a configuration file with every setting explained. It is what a
@@ -79,67 +106,70 @@ func DefaultPath() string {
 	return filepath.Join(home, ".autoclaude", "config.toml")
 }
 
-// Load reads and validates the configuration file.
-func Load(path string) (*Config, error) {
-	cfg := &Config{Listen: "127.0.0.1:8484"}
+// Load reads the configuration file.
+//
+// A mistake in one entry must not take the gateway down, and Claude Code
+// with it. So a provider or a model that cannot be used is left out and
+// named in warnings, and only a file that cannot be understood at all, or an
+// address the gateway must not listen on, is an error.
+func Load(path string) (cfg *Config, warnings []string, err error) {
+	cfg = Default()
 	meta, err := toml.DecodeFile(path, cfg)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	if unknown := meta.Undecoded(); len(unknown) > 0 {
-		return nil, fmt.Errorf("%s: unknown key %q", path, unknown[0])
-	}
-	if err := cfg.validate(); err != nil {
-		return nil, fmt.Errorf("%s: %w", path, err)
-	}
-	return cfg, nil
-}
-
-func (c *Config) validate() error {
 	// The gateway forwards subscription credentials and decrypts traffic:
 	// it must not be reachable from other machines.
-	if host, _, err := net.SplitHostPort(c.Listen); err != nil || !isLoopback(host) {
-		return fmt.Errorf("listen must be a loopback address, got %q", c.Listen)
+	if host, _, err := net.SplitHostPort(cfg.Listen); err != nil || !isLoopback(host) {
+		return nil, nil, fmt.Errorf("%s: listen must be a loopback address, got %q", path, cfg.Listen)
+	}
+	for _, key := range meta.Undecoded() {
+		warnings = append(warnings, fmt.Sprintf("unknown setting %q is ignored", key))
+	}
+	return cfg, append(warnings, cfg.prune()...), nil
+}
+
+// prune removes the providers and models that cannot be used and says why.
+func (c *Config) prune() (warnings []string) {
+	warn := func(format string, args ...any) {
+		warnings = append(warnings, fmt.Sprintf(format, args...))
 	}
 	for name, p := range c.Providers {
 		u, err := url.Parse(p.BaseURL)
 		if err != nil || u.Host == "" || u.Scheme != "http" && u.Scheme != "https" || u.RawQuery != "" {
-			return fmt.Errorf("provider %q: base_url must be an http(s) URL without a query, got %q", name, p.BaseURL)
+			warn("provider %q is ignored: base_url must be an http(s) URL without a query, got %q", name, p.BaseURL)
+			delete(c.Providers, name)
 		}
 	}
-	seen := map[string]bool{}
-	for i := range c.Models {
-		m := &c.Models[i]
-		// The ID ends up inside thinking signatures, delimited by spaces.
-		if m.ID == "" || strings.ContainsAny(m.ID, " \t\n") {
-			return fmt.Errorf("model %q: the id must not be empty or contain whitespace", m.ID)
+	taken := map[string]bool{} // every ID the gateway already answers to
+	usable := c.Models[:0]
+	for _, m := range c.Models {
+		switch _, hasProvider := c.Providers[m.Provider]; {
+		case m.ID == "" || strings.ContainsAny(m.ID, " \t\n"):
+			// The ID ends up inside thinking signatures, delimited by spaces.
+			warn("model %q is ignored: the id must not be empty or contain whitespace", m.ID)
+			continue
+		case taken[m.ID]:
+			warn("model %q is ignored: the id is already in use", m.ID)
+			continue
+		case !hasProvider:
+			warn("model %q is ignored: it has no usable provider %q", m.ID, m.Provider)
+			continue
 		}
-		if seen[m.ID] {
-			return fmt.Errorf("model %q is listed twice", m.ID)
-		}
-		seen[m.ID] = true
-		if _, ok := c.Providers[m.Provider]; !ok {
-			return fmt.Errorf("model %q: unknown provider %q", m.ID, m.Provider)
-		}
+		taken[m.ID] = true
 		if m.Upstream == "" {
 			m.Upstream = m.ID
 		}
-	}
-	// A model reaches the Desktop menu in one of two ways: it takes the
-	// place of a Claude model, or it gets an entry of its own. Mixing the
-	// two would show the same models twice, under different names.
-	if len(c.Menu()) > 0 {
-		for _, m := range c.Models {
-			if strings.HasPrefix(m.ID, claudePrefix) {
-				return fmt.Errorf("model %q: models cannot take the IDs of Claude models while others have a menu name", m.ID)
-			}
+		if m.Slot != "" && taken[m.Slot] {
+			warn("model %q: slot %q is already in use and is ignored", m.ID, m.Slot)
+			m.Slot = ""
 		}
+		taken[m.Slot] = m.Slot != ""
+		usable = append(usable, m)
 	}
-	return nil
+	c.Models = usable
+	return warnings
 }
-
-// claudePrefix starts the ID of every Claude model.
-const claudePrefix = "claude-"
 
 func isLoopback(host string) bool {
 	ip := net.ParseIP(host)

@@ -9,8 +9,8 @@
 //	autoclaude [-config path] desktop    start Claude Desktop with the menu
 //
 // Install registers the gateway as a service that starts at login and points
-// Claude Code at it. If models have menu names, it also sets Claude Desktop
-// up for them; desktop is the fallback where that is not possible.
+// Claude Code at it. With desktop_menu on, it also sets Claude Desktop up
+// for the menu; desktop is the fallback where that is not possible.
 package main
 
 import (
@@ -72,9 +72,19 @@ func run(path, command string, assumeYes bool) error {
 		fmt.Printf("Created %s.\nDescribe your providers and models there, then run `autoclaude install`.\n", path)
 		return nil
 	}
-	cfg, err := config.Load(path)
+	cfg, warnings, err := config.Load(path)
 	if err != nil {
-		return err
+		if command != "" {
+			return err
+		}
+		// A gateway that does not start takes Claude Code down with it.
+		// One that cannot read its configuration still passes everything
+		// to Anthropic.
+		slog.Error("configuration unusable, every model goes to Anthropic", "error", err)
+		cfg = config.Default()
+	}
+	for _, warning := range warnings {
+		slog.Warn(warning)
 	}
 	dir := filepath.Dir(path)
 	// The service belongs to the current user: it needs no administrator
@@ -113,21 +123,28 @@ func run(path, command string, assumeYes bool) error {
 // repeated whenever the configuration changes.
 func install(cfg *config.Config, dir string, daemon service.Service, assumeYes bool) error {
 	settings := claudecode.SettingsPath()
-	withMenu := len(cfg.Menu()) > 0
+	withMenu := cfg.DesktopMenu
 
 	fmt.Println("autoclaude will:")
 	fmt.Println("  1. Run the gateway as a service of your account that starts at login.")
 	fmt.Printf("  2. Point Claude Code at it, in %s.\n", settings)
 	if withMenu {
-		fmt.Println("  3. Put the models that have a menu name into the menu of Claude Desktop.")
-		fmt.Println("     For that it adds a certificate for claude.ai to your")
-		fmt.Println("     account (your system will ask for your password) and puts the gateway")
-		fmt.Println("     between Claude Desktop and claude.ai.")
+		fmt.Println("  3. Give your models entries of their own in the menu of Claude Desktop,")
+		fmt.Println("     as desktop_menu in your config asks. For that it adds a certificate")
+		fmt.Println("     for claude.ai to your account (your system will ask for your password)")
+		fmt.Println("     and puts the gateway between Claude Desktop and claude.ai.")
 		fmt.Println("     Anthropic does not support this: see \"Anthropic's terms\" in the README.")
 	} else {
-		fmt.Println("  3. Leave Claude Desktop with its standard menu: no model has a menu name.")
-		fmt.Println("     If a certificate and a proxy setting are left from earlier, they are")
-		fmt.Println("     removed.")
+		fmt.Println("  3. Leave Claude Desktop with its standard menu; your models answer under")
+		fmt.Println("     the Claude entries named by their slot. If a certificate and a proxy")
+		fmt.Println("     setting are left from desktop_menu, they are removed.")
+	}
+	fmt.Println("Your models:")
+	for _, m := range cfg.Models {
+		fmt.Printf("  %s, served by %s; in Claude Desktop: %s\n", m.ID, m.Provider, inDesktop(cfg, m))
+	}
+	if len(cfg.Models) == 0 {
+		fmt.Println("  none: every request goes to Anthropic")
 	}
 	if !assumeYes && !confirmed("Continue?") {
 		fmt.Println("Nothing was changed.")
@@ -219,8 +236,7 @@ func (p *program) Start(service.Service) error {
 	direct := http.NewServeMux()
 	direct.Handle("/", proxy.API(api))
 	interceptions := []proxy.Interception{{Host: gateway.AnthropicHost, CA: ca, Handler: api}}
-	menuNames := p.cfg.Menu()
-	if len(menuNames) > 0 {
+	if p.cfg.DesktopMenu {
 		ca, _, err := proxy.LoadCA(p.dir, menuCA, menu.Host)
 		if err != nil {
 			return err
@@ -229,14 +245,17 @@ func (p *program) Start(service.Service) error {
 		interceptions = append(interceptions, proxy.Interception{
 			Host:    menu.Host,
 			CA:      ca,
-			Handler: &menu.Menu{Models: menuNames, Transport: gateway.DirectTransport()},
+			Handler: &menu.Menu{Models: p.cfg.Menu(), Transport: gateway.DirectTransport()},
 		})
 	}
 	listener, err := net.Listen("tcp", p.cfg.Listen)
 	if err != nil {
 		return err
 	}
-	slog.Info("gateway started", "listen", p.cfg.Listen, "ca", caPath, "desktop menu", len(menuNames) > 0)
+	slog.Info("gateway started", "listen", p.cfg.Listen, "ca", caPath, "desktop menu", p.cfg.DesktopMenu)
+	for _, m := range p.cfg.Models {
+		slog.Info("model", "id", m.ID, "provider", m.Provider, "upstream", m.Upstream, "in Desktop", inDesktop(p.cfg, m))
+	}
 	p.server = &http.Server{
 		Handler:           proxy.New(direct, interceptions...),
 		ReadHeaderTimeout: 10 * time.Second,
@@ -248,6 +267,19 @@ func (p *program) Start(service.Service) error {
 		}
 	}()
 	return nil
+}
+
+// inDesktop says how a model can be picked in Claude Desktop.
+func inDesktop(cfg *config.Config, m config.Model) string {
+	switch {
+	case cfg.DesktopMenu && m.Menu != "":
+		return fmt.Sprintf("menu entry %q", m.Menu)
+	case !cfg.DesktopMenu && m.Slot != "":
+		return "in place of " + m.Slot
+	case cfg.DesktopMenu:
+		return "not shown: the model has no menu name"
+	}
+	return "not shown: the model has no slot"
 }
 
 // Stop shuts the gateway down, giving requests in flight a moment to finish.

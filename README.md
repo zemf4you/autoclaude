@@ -74,13 +74,11 @@ base_url = "http://127.0.0.1:8000"
 [[model]]
 id = "deepseek-v4-pro"
 provider = "deepseek"
-menu = "DeepSeek V4 Pro" # its name in the menu of Claude Desktop
 
 [[model]]
 id = "qwen"
 provider = "local"
 upstream = "Qwen/Qwen3-Coder-30B-A3B-Instruct" # its name at the provider
-menu = "Qwen 3 Coder"
 ```
 
 Then run `autoclaude install` again. It lists what it is about to change on
@@ -101,8 +99,14 @@ undoes all of it. Restart Claude Code and Claude Desktop afterwards.
    `api.anthropic.com` only, with a certificate authority created on your
    machine that only Claude Code is told to trust; everything else is
    tunnelled through untouched.
-3. **Puts the models that have a `menu` name into the menu of Claude Desktop.**
-   See below.
+3. **Sets Claude Desktop up, if `desktop_menu` is on.** See below.
+
+A mistake in the config does not take Claude Code down with the gateway. A
+model or provider that cannot be used is left out, and `autoclaude install`
+and the gateway's log say which and why; the rest keeps working. If the file
+cannot be read at all, the gateway passes everything to Anthropic. The
+config is read when the gateway starts, so changes apply with the next
+`autoclaude install`.
 
 The gateway adds your provider keys to requests and passes your subscription
 credentials on to Anthropic, so it only listens on a loopback address and
@@ -128,16 +132,35 @@ refuses requests made by web pages.
 ### In Claude Desktop
 
 Desktop gets its model menu from `claude.ai` and lists Claude models only.
-There are two ways to pick your own model there. They are alternatives: a
-config uses one or the other.
+Your models can reach it in one of two ways, and `desktop_menu` in the
+config picks which. A model may carry both a `slot` and a `menu` name; only
+the one that fits the chosen way is used.
 
-#### Your own entries in the menu
+```toml
+desktop_menu = false
 
-Models that have a `menu` name in the config appear in the menu under that
-name. For that the gateway has to sit on Desktop's connection
-to `claude.ai` as well, and Desktop, unlike Claude Code, trusts only the
-certificates of your user account. So `autoclaude install` does two more
-things:
+[[model]]
+id = "deepseek-v4-pro"
+provider = "deepseek"
+slot = "claude-opus-4-6"  # used when desktop_menu is false
+menu = "DeepSeek V4 Pro"  # used when desktop_menu is true
+```
+
+#### Borrowed entries: `desktop_menu = false`
+
+The default. A model takes the menu entry of the Claude model named by its
+`slot`: the entry keeps its name, and your model answers. With the config
+above, choosing *Opus 4.6* talks to DeepSeek. The older models under **More
+models** are good slots.
+
+Nothing touches `claude.ai`, and no certificate is added to your account.
+
+#### Entries of their own: `desktop_menu = true`
+
+Your models appear in the menu under their `menu` names. For that the
+gateway has to sit on Desktop's connection to `claude.ai` as well, and
+Desktop, unlike Claude Code, trusts only the certificates of your user
+account. So `autoclaude install` does two more things:
 
 - It adds one certificate to the trust store of your user account, and your
   system asks for your password. The certificate can vouch for `claude.ai`
@@ -165,22 +188,9 @@ command line.
 Two things to know. The menu format belongs to Anthropic's servers and may
 change without notice; if it does, the menu falls back to the standard one.
 And this changes a response of `claude.ai` on its way to the app; see
-[Anthropic's terms](#anthropics-terms) before you turn it on.
-
-#### Borrowed entries, no certificate
-
-Leave `menu` out and give your model the ID of a Claude model you do not
-use. The older models under **More models** are good candidates:
-
-```toml
-[[model]]
-id = "claude-opus-4-6"
-provider = "deepseek"
-upstream = "deepseek-v4-pro"
-```
-
-The menu entry keeps its name: choosing *Opus 4.6* now talks to DeepSeek.
-Nothing touches `claude.ai`, and no certificate is added to your account.
+[Anthropic's terms](#anthropics-terms) before you turn it on. Setting
+`desktop_menu` back to `false` and running `autoclaude install` removes the
+certificate and the setting again.
 
 ### Without install
 
@@ -251,7 +261,7 @@ What applies to everything AutoClaude does:
 
 What applies to the menu of Claude Desktop in addition:
 
-- For models with a `menu` name, the gateway also decrypts Desktop's connection to
+- With `desktop_menu = true`, the gateway also decrypts Desktop's connection to
   `claude.ai` and adds entries to a response of that service. The Consumer
   Terms (§3) forbid to "interfere with, or disrupt" the services and to
   bypass "any of our systems or protective measures"; whether adding menu
@@ -259,8 +269,8 @@ What applies to the menu of Claude Desktop in addition:
 - The gateway does not disguise itself, patch the app or defeat any of its
   checks. The proxy it uses is Desktop's own documented setting.
 
-If that is more than you want to risk, leave `menu` out and use the
-borrowed entries: nothing touches `claude.ai` then.
+If that is more than you want to risk, keep `desktop_menu = false` and use
+the borrowed entries: nothing touches `claude.ai` then.
 
 ## License
 
