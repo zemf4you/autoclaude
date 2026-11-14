@@ -117,7 +117,8 @@ func (p *program) Start(service.Service) error {
 	direct := http.NewServeMux()
 	direct.Handle("/", proxy.API(p.gateway))
 	direct.Handle("POST "+reloadPath, proxy.Local(http.HandlerFunc(p.serveReload)))
-	interceptions := []proxy.Interception{{Host: gateway.AnthropicHost, CA: ca, Handler: p.gateway}}
+	api := &menu.Catalog{Models: func() []menu.Model { return windows(p.config()) }, Next: p.gateway}
+	interceptions := []proxy.Interception{{Host: gateway.AnthropicHost, CA: ca, Handler: api}}
 	if cfg.OwnEntries() {
 		ca, _, err := proxy.LoadCA(dir, menuCA, menu.Host)
 		if err != nil {
@@ -128,7 +129,7 @@ func (p *program) Start(service.Service) error {
 			Host: menu.Host,
 			CA:   ca,
 			Handler: &menu.Menu{
-				Models:    func() map[string]string { return p.config().Menu() },
+				Models:    func() []menu.Model { return entries(p.config()) },
 				Refresh:   p.refresh,
 				Transport: gateway.DirectTransport(),
 			},
@@ -160,6 +161,32 @@ func (p *program) Stop(service.Service) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	return p.server.Shutdown(ctx)
+}
+
+// entries returns the models that have entries of their own in the Desktop
+// menu.
+func entries(cfg *config.Config) []menu.Model {
+	var models []menu.Model
+	for _, m := range cfg.Menu() {
+		models = append(models, menu.Model{ID: m.ID, Name: m.Name, Context: m.Context})
+	}
+	return models
+}
+
+// windows returns the models whose context window is configured, under
+// every ID a Claude Code session may know them by.
+func windows(cfg *config.Config) []menu.Model {
+	var models []menu.Model
+	for _, m := range cfg.Models {
+		if m.Context == 0 {
+			continue
+		}
+		models = append(models, menu.Model{ID: m.ID, Name: m.Name, Context: m.Context})
+		if !cfg.OwnEntries() && m.Slot != "" {
+			models = append(models, menu.Model{ID: m.Slot, Context: m.Context})
+		}
+	}
+	return models
 }
 
 // reachable reports whether something accepts connections at address.

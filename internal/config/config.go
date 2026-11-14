@@ -51,6 +51,9 @@ type Model struct {
 	// the CLI and, with Entries, in the menu of Claude Desktop.
 	// It defaults to ID.
 	Name string `toml:"name"`
+	// Context is the model's context window, in tokens, for Claude Code to
+	// show and to compact the conversation by. Zero is unknown.
+	Context int `toml:"context"`
 	// Slot is the ID of the Claude model whose entry in the Desktop menu
 	// the model takes. It is used with Slots.
 	Slot string `toml:"slot"`
@@ -77,16 +80,13 @@ func (c *Config) OwnEntries() bool {
 	return c.Desktop == Entries
 }
 
-// Menu returns the names of the models' own entries in the Desktop menu, by
-// model ID. It is empty unless the models have such entries.
-func (c *Config) Menu() map[string]string {
-	names := map[string]string{}
-	for _, m := range c.Models {
-		if c.OwnEntries() {
-			names[m.ID] = m.Name
-		}
+// Menu returns the models that have entries of their own in the Desktop
+// menu.
+func (c *Config) Menu() []Model {
+	if !c.OwnEntries() {
+		return nil
 	}
-	return names
+	return c.Models
 }
 
 // Routes returns the model for every model ID the gateway answers to: the
@@ -103,6 +103,12 @@ func (c *Config) Routes() map[string]Model {
 	}
 	return routes
 }
+
+// The context windows Claude Code accepts for a model, in tokens.
+const (
+	MinContext = 100_000
+	MaxContext = 10_000_000
+)
 
 // Example is a configuration file with every setting explained. It is what a
 // new user starts from.
@@ -189,6 +195,10 @@ func (c *Config) prune() (warnings []string) {
 		}
 		if m.Name == "" {
 			m.Name = m.ID
+		}
+		if m.Context != 0 && (m.Context < MinContext || m.Context > MaxContext) {
+			warn("model %q: context must be from %d to %d tokens, got %d; it is ignored", m.ID, MinContext, MaxContext, m.Context)
+			m.Context = 0
 		}
 		if m.Slot != "" && taken[m.Slot] {
 			warn("model %q: slot %q is already in use and is ignored", m.ID, m.Slot)

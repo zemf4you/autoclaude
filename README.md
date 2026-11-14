@@ -111,11 +111,10 @@ models it now serves and anything it had to leave out. Nothing restarts. A
 file it cannot use leaves it as it was. A session that is still on a model
 you removed is told so.
 
-When a conversation outgrows a model's context window, the provider rejects
-the request and Claude Code, which knows the overflow errors of the common
-providers and runtimes, compacts the conversation and carries on. Setting
-`context_window` in the config makes it compact earlier, before a request is
-rejected.
+Give a model its context window with `context` in its block: Claude Code
+then shows it and compacts the conversation in time. Without it, the
+conversation is compacted once the provider rejects a request as too long:
+Claude Code knows the overflow errors of the common providers and runtimes.
 
 `listen` and `desktop` are the exception: they change what is set up on your
 machine, so run `autoclaude install` after changing them.
@@ -240,14 +239,14 @@ ANTHROPIC_BASE_URL=http://127.0.0.1:8484 claude --model qwen
 
 - A provider has to implement what Claude Code asks of the Messages API:
   streaming, tool use and, for the context meter, `count_tokens`.
-- Claude Code has a single context window setting for all the models it
-  does not know, so `context_window` in the config is one value: the smallest
-  window among your models. A model that takes a Claude entry with
-  `desktop = "slots"` is, to Claude Desktop, that Claude model, so the
-  setting does not reach it there. Either way a model's real window is
-  enforced by its provider, and Claude Code compacts when the provider
-  reports an overflow in a form it recognises; a provider that truncates the
-  conversation silently gives it nothing to react to.
+- Claude Code accepts a context window for a model only from 100,000 to
+  10,000,000 tokens. For smaller models there is `context_window`, a single
+  value for all your models without a `context`, and the provider's own
+  refusal of a request that is too long; a provider that truncates the
+  conversation silently gives Claude Code nothing to react to.
+- A model's `context` reaches Claude Code in the list of models it gets from
+  Anthropic, which Anthropic can stop it from using at any time. It was
+  checked in Claude Desktop, not in the CLI.
 - When Claude Desktop cancels a request to a third-party model before the
   first byte of the answer, the provider keeps generating until it starts
   to respond.

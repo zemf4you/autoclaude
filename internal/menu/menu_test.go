@@ -16,7 +16,7 @@ func host(t *testing.T) *httptest.Server {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
 			io.WriteString(w, `{"account":{"id":12345678901234567890},"model_selector_config":[`+
-				`{"id":"cc","models":[{"id":"claude-opus-5-5","name":"Opus 5.5"},{"id":"taken","name":"Taken"}]},`+
+				`{"id":"cc","models":[{"id":"claude-opus-5-5","name":"Opus 5.5","runtime":{"max_input_tokens":1000000,"family":"opus"}},{"id":"taken","name":"Taken"}]},`+
 				`{"id":"chat","models":[{"id":"claude-opus-5-5"}]}]}`)
 			return
 		}
@@ -28,10 +28,10 @@ func host(t *testing.T) *httptest.Server {
 }
 
 func do(t *testing.T, method, url, body string) (int, string) {
-	names := map[string]string{"qwen": "Qwen", "taken": "Ignored"}
-	m := &Menu{Models: func() map[string]string { return names }, Transport: http.DefaultTransport}
+	models := []Model{{ID: "qwen", Name: "Qwen", Context: 131072}, {ID: "taken", Name: "Ignored"}}
+	m := &Menu{Models: func() []Model { return models }, Transport: http.DefaultTransport}
 	// The configuration is refreshed right before the menu is built from it.
-	m.Refresh = func() { names["fresh"] = "Fresh" }
+	m.Refresh = func() { models = append(models, Model{ID: "fresh", Name: "Fresh"}) }
 	r, _ := http.NewRequest(method, url, strings.NewReader(body))
 	resp, err := m.RoundTrip(r)
 	if err != nil {
@@ -45,7 +45,7 @@ func do(t *testing.T, method, url, body string) (int, string) {
 func TestModelsAreAddedToCodeMenus(t *testing.T) {
 	_, out := do(t, http.MethodGet, host(t).URL+"/api/bootstrap/org/app_start", "")
 
-	if got := gjson.Get(out, `model_selector_config.#(id=="cc").models.#.id`).String(); got != `["claude-opus-5-5","taken","fresh","qwen"]` {
+	if got := gjson.Get(out, `model_selector_config.#(id=="cc").models.#.id`).String(); got != `["claude-opus-5-5","taken","qwen","fresh"]` {
 		t.Errorf("code menu = %s", got)
 	}
 	if got := gjson.Get(out, `model_selector_config.#(id=="cc").models.#(id=="qwen").name`).String(); got != "Qwen" {
@@ -56,6 +56,35 @@ func TestModelsAreAddedToCodeMenus(t *testing.T) {
 	}
 	if got := gjson.Get(out, "account.id").Raw; got != "12345678901234567890" {
 		t.Errorf("a number lost precision: %s", got)
+	}
+}
+
+// A session learns the windows from the list the Anthropic API gives it.
+func TestCatalogCarriesContextWindows(t *testing.T) {
+	models := []Model{{ID: "qwen", Name: "Qwen", Context: 131072}, {ID: "claude-opus-5-5", Context: 200000}, {ID: "claude-gone", Context: 200000}}
+	catalog := &Catalog{Models: func() []Model { return models }, Next: http.DefaultTransport}
+	r, _ := http.NewRequest(http.MethodGet, host(t).URL+"/api/organizations/org/model_selector/ccd", nil)
+	r.Header.Set("If-None-Match", `"cached"`)
+	resp, err := catalog.RoundTrip(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	out := string(body)
+
+	if got := gjson.Get(out, `model_selector_config.#(id=="cc").models.#.id`).String(); got != `["claude-opus-5-5","taken","qwen"]` {
+		t.Errorf("a model without a name must not get a row: %s", got)
+	}
+	if got := gjson.Get(out, `model_selector_config.#(id=="cc").models.#(id=="qwen").runtime.max_input_tokens`).Int(); got != 131072 {
+		t.Errorf("window of a model of its own = %d", got)
+	}
+	opus := gjson.Get(out, `model_selector_config.#(id=="cc").models.#(id=="claude-opus-5-5").runtime`)
+	if opus.Get("max_input_tokens").Int() != 200000 || opus.Get("family").String() != "opus" {
+		t.Errorf("a listed model keeps its row and gets the window: %s", opus)
+	}
+	if r.Header.Get("If-None-Match") != "" {
+		t.Error("the list must be fetched whole every time")
 	}
 }
 

@@ -35,15 +35,13 @@ desktop = "slots"
 
 # ── Context window ───────────────────────────────────────────────────────────
 #
-# Optional. The context window, in tokens, that Claude Code should assume for
-# your models. Left to itself it assumes a very large one and compacts the
-# conversation only once the provider rejects a request as too long. With
-# this set it compacts earlier. Claude Code keeps a single value for all the
-# models it does not know, so give the smallest window among yours. Claude
-# models are not affected.
+# Give a model its window with `context` in its [[model]] block, below.
 #
-# A model that takes a Claude entry with desktop = "slots" is, to Claude
-# Desktop, that Claude model: this setting does not reach it there.
+# This one is the window Claude Code should assume for your models that have
+# none there. Left to itself it assumes a very large one and compacts the
+# conversation only once the provider rejects a request as too long. Claude
+# Code keeps a single such value, so give the smallest window among those
+# models. Claude models are not affected.
 
 #context_window = 64000
 
@@ -80,12 +78,15 @@ desktop = "slots"
 #   name       what to call the model in menus; the id if left out
 #   slot       the Claude model whose place it takes in Claude Desktop with
 #              desktop = "slots"; see above
+#   context    its context window in tokens, from 100000 to 10000000: Claude
+#              Code shows it and compacts the conversation by it
 
 #[[model]]
 #id = "deepseek-v4-pro"
 #provider = "deepseek"
 #name = "DeepSeek V4 Pro"
 #slot = "claude-opus-4-6"
+#context = 1000000
 
 #[[model]]
 #id = "qwen"

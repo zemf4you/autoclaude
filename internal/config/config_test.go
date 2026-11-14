@@ -76,7 +76,7 @@ func TestDesktopPicksTheWayIntoTheMenu(t *testing.T) {
 	if got := routes(cfg); !slices.Equal(got, []string{"deepseek-v4-pro", "qwen3.5:4b"}) {
 		t.Errorf("with the menu, the gateway answers to %q", got)
 	}
-	if menu := cfg.Menu(); len(menu) != 2 || menu["deepseek-v4-pro"] != "DeepSeek V4 Pro" || menu["qwen3.5:4b"] != "qwen3.5:4b" {
+	if menu := cfg.Menu(); len(menu) != 2 || menu[0].Name != "DeepSeek V4 Pro" || menu[1].Name != "qwen3.5:4b" {
 		t.Errorf("with the menu, menu = %v", menu)
 	}
 }
@@ -92,7 +92,7 @@ func TestExample(t *testing.T) {
 	if err != nil || len(warnings) != 0 {
 		t.Fatalf("with the examples on: warnings %q, error %v", warnings, err)
 	}
-	if len(cfg.Providers) != 3 || len(cfg.Models) != 2 || len(cfg.Routes()) != 4 || cfg.ContextWindow != 64000 {
+	if len(cfg.Providers) != 3 || len(cfg.Models) != 2 || len(cfg.Routes()) != 4 || cfg.ContextWindow != 64000 || cfg.Models[0].Context != 1000000 {
 		t.Errorf("providers %d, models %d, routes %d", len(cfg.Providers), len(cfg.Models), len(cfg.Routes()))
 	}
 }
@@ -114,6 +114,7 @@ base_url = "localhost:8000"
 id = "good"
 provider = "local"
 slot = "claude-opus-4-6"
+context = 32768
 
 [[model]]
 id = "my model"
@@ -141,13 +142,16 @@ slot = "claude-opus-4-6"
 	if cfg.Routes()["claude-opus-4-6"].ID != "good" {
 		t.Error("a slot goes to the first model that names it")
 	}
-	for _, want := range []string{`desktop must be`, `context_window must be`, `"listn"`, `"broken"`, `"my model"`, `"good" is ignored`, `"orphan"`, `slot "claude-opus-4-6"`} {
+	for _, want := range []string{`desktop must be`, `context_window must be`, `"listn"`, `"broken"`, `"my model"`, `"good" is ignored`, `"orphan"`, `slot "claude-opus-4-6"`, `context must be`} {
 		if !slices.ContainsFunc(warnings, func(w string) bool { return strings.Contains(w, want) }) {
 			t.Errorf("no warning mentions %s in %q", want, warnings)
 		}
 	}
-	if len(warnings) != 8 {
-		t.Errorf("%d warnings, want 8: %q", len(warnings), warnings)
+	if len(warnings) != 9 {
+		t.Errorf("%d warnings, want 9: %q", len(warnings), warnings)
+	}
+	if cfg.Models[0].Context != 0 {
+		t.Error("a context window Claude Code would not accept must be dropped")
 	}
 	if cfg.OwnEntries() {
 		t.Error("an unknown desktop setting must fall back to slots")
