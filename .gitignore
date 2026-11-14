@@ -1,0 +1,6 @@
+# built binary
+/autoclaude
+
+# local configuration, certificates and keys
+config.toml
+*.pem

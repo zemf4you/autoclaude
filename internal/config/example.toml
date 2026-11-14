@@ -1,0 +1,70 @@
+# AutoClaude configuration.
+#
+# Lines that start with "#" right before a setting are examples: remove the
+# "#" to turn them on. After any change, run `autoclaude install` again.
+#
+# Keep this file private: it holds your provider keys.
+
+# Address the gateway listens on. It must be a loopback address.
+listen = "127.0.0.1:8484"
+
+
+# ── Providers ────────────────────────────────────────────────────────────────
+#
+# The services that run your models. Each must speak the Anthropic Messages
+# API; for an OpenAI-only endpoint, put a translator such as LiteLLM in front.
+# The name after "providers." is yours to choose.
+#
+#   base_url   where the provider serves the API, without "/v1/messages"
+#   api_key    your key; leave it out for a local server that needs none
+
+#[providers.deepseek]
+#base_url = "https://api.deepseek.com/anthropic"
+#api_key = "sk-..."
+
+#[providers.openrouter]
+#base_url = "https://openrouter.ai/api"
+#api_key = "sk-or-..."
+
+#[providers.local]
+#base_url = "http://127.0.0.1:8000" # vLLM, llama.cpp, Ollama
+
+
+# ── Models ───────────────────────────────────────────────────────────────────
+#
+# Which provider serves which model. On the left is the model ID you pick in
+# Claude Code. On the right is "provider", or "provider/model" when the
+# provider knows the model under another name. A model that is not listed
+# goes to Anthropic on your subscription.
+#
+# An ID with a dot, a colon or a slash has to be quoted.
+
+#[models]
+#deepseek-v4-pro = "deepseek"
+#"deepseek/deepseek-v4-pro" = "openrouter"
+#qwen = "local/Qwen/Qwen3-Coder-30B-A3B-Instruct"
+
+
+# ── Claude Desktop menu ──────────────────────────────────────────────────────
+#
+# Claude Desktop lists only Claude models. There are two ways to pick your
+# own model there; use one or the other.
+#
+# 1. Entries of their own. List the models from [models] with the names to
+#    show. `autoclaude install` then adds a certificate for claude.ai to your
+#    user account, asking for your password, and puts the gateway between
+#    Claude Desktop and claude.ai. Anthropic does not support this: read
+#    "Anthropic's terms" in the README before you turn it on.
+
+#[menu]
+#deepseek-v4-pro = "DeepSeek V4 Pro"
+#qwen = "Qwen 3 Coder"
+
+# 2. Borrowed entries, no certificate. Leave [menu] out and give your models,
+#    in [models], the IDs of Claude models you do not use. The menu entry
+#    keeps its name and your model answers. The entries under "More models"
+#    are good candidates: claude-opus-4-6, claude-opus-4-7, claude-opus-4-8,
+#    claude-sonnet-4-6, claude-opus-5, claude-sonnet-5, claude-fable-5,
+#    claude-fable-5-1, claude-haiku-4-5-20251001. For example:
+#
+#      claude-opus-4-6 = "deepseek/deepseek-v4-pro"
