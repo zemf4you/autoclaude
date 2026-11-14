@@ -142,6 +142,7 @@ func (g *Gateway) RoundTrip(r *http.Request) (*http.Response, error) {
 	}
 	resp, err := g.send(x)
 	if err != nil {
+		slog.Error("upstream did not answer", "model", model, "upstream", up.name, "error", err)
 		return nil, err
 	}
 	slog.Info("request", "method", r.Method, "path", r.URL.Path,
