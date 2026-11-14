@@ -93,14 +93,19 @@ configured and whether their providers answer.
 
 ### Changing the config
 
-Add, change or remove providers and models in the config, and they apply the
-next time Claude starts: a new Claude Code session, or a restart of Claude
-Desktop. The gateway reads the file at the moment Claude builds its list of
-models, so Claude never offers a model the gateway has stopped serving. A
-session that is still on a model you removed is told so.
+Edit the config, then apply it:
 
-`listen` and `desktop_menu` are the exception: they change what is set up on
-your machine, so run `autoclaude install` after changing them.
+```bash
+autoclaude reload
+```
+
+The running gateway re-reads the file and prints what it made of it: the
+models it now serves and anything it had to leave out. Nothing restarts. A
+file it cannot use leaves it as it was. A session that is still on a model
+you removed is told so.
+
+`listen` and `desktop` are the exception: they change what is set up on your
+machine, so run `autoclaude install` after changing them.
 
 ### What install does
 
@@ -116,7 +121,8 @@ your machine, so run `autoclaude install` after changing them.
    `api.anthropic.com` only, with a certificate authority created on your
    machine that only Claude Code is told to trust; everything else is
    tunnelled through untouched.
-3. **Sets Claude Desktop up, if `desktop_menu` is on.** See below.
+3. **Sets Claude Desktop up, if the config says `desktop = "entries"`.** See
+   below.
 
 A mistake in the config does not take Claude Code down with the gateway. A
 model or provider that cannot be used is left out, and `autoclaude status`
@@ -137,20 +143,20 @@ them there. `/model qwen` and `/model opus` switch back and forth, and
 ### In Claude Desktop
 
 Desktop gets its model menu from `claude.ai` and lists Claude models only.
-Your models can reach it in one of two ways, and `desktop_menu` in the
-config picks which.
+Your models can reach it in one of two ways, and `desktop` in the config
+picks which.
 
 ```toml
-desktop_menu = false
+desktop = "slots"
 
 [[model]]
 id = "deepseek-v4-pro"
 provider = "deepseek"
 name = "DeepSeek V4 Pro"
-slot = "claude-opus-4-6" # the Claude entry it takes while desktop_menu is false
+slot = "claude-opus-4-6" # the Claude entry it takes with desktop = "slots"
 ```
 
-#### Borrowed entries: `desktop_menu = false`
+#### Borrowed entries: `desktop = "slots"`
 
 The default. A model takes the menu entry of the Claude model named by its
 `slot`: the entry keeps its name, and your model answers. With the config
@@ -159,9 +165,10 @@ models** are good slots. A model without a `slot` is not in the Desktop menu.
 
 Nothing touches `claude.ai`, and no certificate is added to your account.
 
-#### Entries of their own: `desktop_menu = true`
+#### Entries of their own: `desktop = "entries"`
 
-Your models appear in the menu under their names. For that the
+Your models appear in the menu under their names, and Desktop gets the
+current list from the gateway each time it starts. For that the
 gateway has to sit on Desktop's connection to `claude.ai` as well, and
 Desktop, unlike Claude Code, trusts only the certificates of your user
 account. So `autoclaude install` does two more things:
@@ -193,7 +200,7 @@ Two things to know. The menu format belongs to Anthropic's servers and may
 change without notice; if it does, the menu falls back to the standard one.
 And this changes a response of `claude.ai` on its way to the app; see
 [Anthropic's terms](#anthropics-terms) before you turn it on. Setting
-`desktop_menu` back to `false` and running `autoclaude install` removes the
+`desktop` back to `"slots"` and running `autoclaude install` removes the
 certificate and the setting again.
 
 ### Without install
@@ -269,7 +276,7 @@ What applies to everything AutoClaude does:
 
 What applies to the menu of Claude Desktop in addition:
 
-- With `desktop_menu = true`, the gateway also decrypts Desktop's connection to
+- With `desktop = "entries"`, the gateway also decrypts Desktop's connection to
   `claude.ai` and adds entries to a response of that service. The Consumer
   Terms (§3) forbid to "interfere with, or disrupt" the services and to
   bypass "any of our systems or protective measures"; whether adding menu
@@ -277,8 +284,8 @@ What applies to the menu of Claude Desktop in addition:
 - The gateway does not disguise itself, patch the app or defeat any of its
   checks. The proxy it uses is Desktop's own documented setting.
 
-If that is more than you want to risk, keep `desktop_menu = false` and use
-the borrowed entries: nothing touches `claude.ai` then.
+If that is more than you want to risk, keep `desktop = "slots"` and use the
+borrowed entries: nothing touches `claude.ai` then.
 
 ## License
 

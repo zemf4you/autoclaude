@@ -17,10 +17,9 @@ import (
 type Config struct {
 	// Listen is the loopback address the gateway accepts requests on.
 	Listen string `toml:"listen"`
-	// DesktopMenu chooses how the models reach the model menu of Claude
-	// Desktop: as entries of their own (true), which needs a certificate
-	// in the user's trust store, or in place of Claude models (false).
-	DesktopMenu bool `toml:"desktop_menu"`
+	// Desktop chooses how the models reach the model menu of Claude
+	// Desktop: Slots or Entries.
+	Desktop string `toml:"desktop"`
 	// Providers are third-party Anthropic-compatible providers by name.
 	Providers map[string]Provider `toml:"providers"`
 	// Models are the models served by the providers. A model that is not
@@ -45,26 +44,41 @@ type Model struct {
 	// Upstream is the model's name at the provider. It defaults to ID.
 	Upstream string `toml:"upstream"`
 	// Name is what the model is called in menus: in the model picker of
-	// the CLI and, when DesktopMenu is on, in the menu of Claude Desktop.
+	// the CLI and, with Entries, in the menu of Claude Desktop.
 	// It defaults to ID.
 	Name string `toml:"name"`
 	// Slot is the ID of the Claude model whose entry in the Desktop menu
-	// the model takes. It is used when DesktopMenu is off.
+	// the model takes. It is used with Slots.
 	Slot string `toml:"slot"`
 }
+
+// The ways for models to reach the model menu of Claude Desktop.
+const (
+	// Slots puts a model in place of the Claude model named by its Slot.
+	Slots = "slots"
+	// Entries gives the models menu entries of their own. It needs a
+	// certificate for claude.ai in the user's trust store.
+	Entries = "entries"
+)
 
 // Default returns the configuration of a gateway that knows no models and
 // passes everything to Anthropic.
 func Default() *Config {
-	return &Config{Listen: "127.0.0.1:8484"}
+	return &Config{Listen: "127.0.0.1:8484", Desktop: Slots}
+}
+
+// OwnEntries reports whether the models get entries of their own in the
+// menu of Claude Desktop.
+func (c *Config) OwnEntries() bool {
+	return c.Desktop == Entries
 }
 
 // Menu returns the names of the models' own entries in the Desktop menu, by
-// model ID. It is empty unless DesktopMenu is on.
+// model ID. It is empty unless the models have such entries.
 func (c *Config) Menu() map[string]string {
 	names := map[string]string{}
 	for _, m := range c.Models {
-		if c.DesktopMenu {
+		if c.OwnEntries() {
 			names[m.ID] = m.Name
 		}
 	}
@@ -72,14 +86,14 @@ func (c *Config) Menu() map[string]string {
 }
 
 // Routes returns the model for every model ID the gateway answers to: the
-// models' own IDs and, unless DesktopMenu is on, the Claude IDs they take.
+// models' own IDs and, with Slots, the Claude IDs they take.
 func (c *Config) Routes() map[string]Model {
 	routes := map[string]Model{}
 	for _, m := range c.Models {
 		routes[m.ID] = m
 	}
 	for _, m := range c.Models {
-		if !c.DesktopMenu && m.Slot != "" {
+		if !c.OwnEntries() && m.Slot != "" {
 			routes[m.Slot] = m
 		}
 	}
@@ -123,6 +137,10 @@ func Load(path string) (cfg *Config, warnings []string, err error) {
 	// it must not be reachable from other machines.
 	if host, _, err := net.SplitHostPort(cfg.Listen); err != nil || !isLoopback(host) {
 		return nil, nil, fmt.Errorf("%s: listen must be a loopback address, got %q", path, cfg.Listen)
+	}
+	if cfg.Desktop != Slots && cfg.Desktop != Entries {
+		warnings = append(warnings, fmt.Sprintf("desktop must be %q or %q, got %q; using %q", Slots, Entries, cfg.Desktop, Slots))
+		cfg.Desktop = Slots
 	}
 	for _, key := range meta.Undecoded() {
 		warnings = append(warnings, fmt.Sprintf("unknown setting %q is ignored", key))

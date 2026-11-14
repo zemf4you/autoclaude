@@ -6,12 +6,13 @@
 //	autoclaude [-config path] install    set everything up for this user
 //	autoclaude [-config path] uninstall  undo install
 //	                                     (both ask first; -y skips the question)
+//	autoclaude [-config path] reload     apply the changes made to the config
 //	autoclaude [-config path] status     say what is set up and what is not
 //	autoclaude [-config path] desktop    start Claude Desktop with the menu
 //
 // Install registers the gateway as a service that starts at login and points
-// Claude Code at it. With desktop_menu on, it also sets Claude Desktop up for
-// the menu; desktop is the fallback where that is not possible.
+// Claude Code at it. With desktop = "entries", it also sets Claude Desktop up
+// for the menu; desktop is the fallback where that is not possible.
 package main
 
 import (
@@ -19,8 +20,10 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -80,10 +83,7 @@ func run(path, command string, assumeYes bool) error {
 		slog.Error("configuration unusable, every model goes to Anthropic", "error", err)
 		cfg = config.Default()
 	}
-	for _, warning := range warnings {
-		slog.Warn(warning)
-	}
-	setup := &setup{path: path, dir: filepath.Dir(path), cfg: cfg}
+	setup := &setup{path: path, dir: filepath.Dir(path), cfg: cfg, warnings: warnings}
 	// The service belongs to the current user: it needs no administrator
 	// rights where the system has per-user services, and it is restarted
 	// if it ever stops.
@@ -104,11 +104,16 @@ func run(path, command string, assumeYes bool) error {
 	}
 	switch command {
 	case "":
+		for _, warning := range warnings {
+			slog.Warn(warning)
+		}
 		return setup.daemon.Run()
 	case "install":
 		return setup.install(assumeYes)
 	case "uninstall":
 		return setup.uninstall(assumeYes)
+	case "reload":
+		return setup.reload()
 	case "status":
 		setup.status()
 		return nil
@@ -120,10 +125,12 @@ func run(path, command string, assumeYes bool) error {
 
 // setup is what autoclaude arranges on the user's machine around the gateway.
 type setup struct {
-	path   string // configuration file
-	dir    string // its directory, which also holds the certificates and logs
-	cfg    *config.Config
-	daemon service.Service
+	path string // configuration file
+	dir  string // its directory, which also holds the certificates and logs
+	cfg  *config.Config
+	// warnings name the parts of the configuration that were left out.
+	warnings []string
+	daemon   service.Service
 }
 
 func (s *setup) proxyURL() string     { return "http://" + s.cfg.Listen }
@@ -138,18 +145,18 @@ func (s *setup) install(assumeYes bool) error {
 	fmt.Println("autoclaude will:")
 	fmt.Println("  1. Run the gateway as a service of your account that starts at login.")
 	fmt.Printf("  2. Point Claude Code at it and list your models in its model picker,\n     in %s.\n", settings)
-	if s.cfg.DesktopMenu {
+	if s.cfg.OwnEntries() {
 		fmt.Println("  3. Give your models entries of their own in the menu of Claude Desktop,")
-		fmt.Println("     as desktop_menu in your config asks. For that it adds a certificate")
+		fmt.Println("     as desktop = \"entries\" asks. For that it adds a certificate")
 		fmt.Println("     for claude.ai to your account (your system will ask for your password)")
 		fmt.Println("     and puts the gateway between Claude Desktop and claude.ai.")
 		fmt.Println("     Anthropic does not support this: see \"Anthropic's terms\" in the README.")
 	} else {
 		fmt.Println("  3. Leave Claude Desktop with its standard menu; your models answer under")
 		fmt.Println("     the Claude entries named by their slot. If a certificate and a proxy")
-		fmt.Println("     setting are left from desktop_menu, they are removed.")
+		fmt.Println("     setting are left from desktop = \"entries\", they are removed.")
 	}
-	s.printModels()
+	s.printConfig()
 	if !assumeYes && !confirmed("Continue?") {
 		fmt.Println("Nothing was changed.")
 		return nil
@@ -175,7 +182,7 @@ func (s *setup) install(assumeYes bool) error {
 	if err := claudecode.SetModels(settings, pickerOptions(s.cfg)); err != nil {
 		return err
 	}
-	if s.cfg.DesktopMenu {
+	if s.cfg.OwnEntries() {
 		if _, _, err := proxy.LoadCA(s.dir, menuCA, menu.Host); err != nil {
 			return err
 		}
@@ -239,40 +246,66 @@ func (s *setup) status() {
 		"Claude Code does not use the gateway: run `autoclaude install`")
 	trusted, proxied := desktop.Status(s.menuCertPath())
 	switch {
-	case s.cfg.DesktopMenu:
+	case s.cfg.OwnEntries():
 		report(trusted, "your account trusts the certificate for claude.ai",
 			"your account does not trust the certificate for claude.ai: run `autoclaude install`")
 		report(proxied, "Claude Desktop reaches claude.ai through the gateway",
 			"Claude Desktop has no proxy setting: run `autoclaude install`, or start it with `autoclaude desktop`")
 	case trusted || proxied:
-		report(false, "", "desktop_menu is off, but its certificate or proxy setting is still installed: run `autoclaude install`")
+		report(false, "", "desktop is \"slots\", but a certificate or proxy setting is still installed: run `autoclaude install`")
 	default:
-		report(true, "Claude Desktop keeps its standard menu (desktop_menu is off)", "")
+		report(true, "Claude Desktop keeps its standard menu (desktop = \"slots\")", "")
 	}
 
-	s.printModels()
+	s.printConfig()
 	fmt.Println("Providers:")
 	for name, p := range s.cfg.Providers {
 		report(reachable(hostPort(p.BaseURL)), "provider "+name+" is reachable", "provider "+name+" does not answer at "+p.BaseURL)
 	}
 }
 
-// printModels lists the configured models and how each can be picked in
+// reload tells the running gateway to re-read the configuration and prints
+// what the gateway made of it.
+func (s *setup) reload() error {
+	resp, err := http.Post(s.proxyURL()+reloadPath, "text/plain", nil)
+	if err != nil {
+		return fmt.Errorf("the gateway is not running: run `autoclaude install` (%w)", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("the gateway answered %s; it may be an older version: run `autoclaude install`", resp.Status)
+	}
+	_, err = io.Copy(os.Stdout, resp.Body)
+	return err
+}
+
+// printConfig lists the configured models and what was left out of them.
+func (s *setup) printConfig() {
+	for _, warning := range s.warnings {
+		fmt.Println("Warning: " + warning)
+	}
+	for _, line := range modelLines(s.cfg) {
+		fmt.Println(line)
+	}
+}
+
+// modelLines describes the configured models and how each can be picked in
 // Claude Desktop.
-func (s *setup) printModels() {
-	fmt.Println("Models:")
-	for _, m := range s.cfg.Models {
-		fmt.Printf("  %s, shown as %q, served by %s; in Claude Desktop: %s\n", m.ID, m.Name, m.Provider, inDesktop(s.cfg, m))
+func modelLines(cfg *config.Config) []string {
+	lines := []string{"Models:"}
+	for _, m := range cfg.Models {
+		lines = append(lines, fmt.Sprintf("  %s, shown as %q, served by %s; in Claude Desktop: %s", m.ID, m.Name, m.Provider, inDesktop(cfg, m)))
 	}
-	if len(s.cfg.Models) == 0 {
-		fmt.Println("  none: every request goes to Anthropic")
+	if len(cfg.Models) == 0 {
+		lines = append(lines, "  none: every request goes to Anthropic")
 	}
+	return lines
 }
 
 // inDesktop says how a model can be picked in Claude Desktop.
 func inDesktop(cfg *config.Config, m config.Model) string {
 	switch {
-	case cfg.DesktopMenu:
+	case cfg.OwnEntries():
 		return "its own entry"
 	case m.Slot != "":
 		return "in place of " + m.Slot

@@ -55,20 +55,24 @@ func New(direct http.Handler, interceptions ...Interception) http.Handler {
 }
 
 // API returns the handler for requests the CLI sends straight to the
-// gateway. It rejects requests made by web pages: Claude Code never sends an
-// Origin header, while a page open in the user's browser would, and could
-// otherwise spend the provider keys the gateway adds to requests.
+// gateway.
 func API(gw http.RoundTripper) http.Handler {
-	forward := &httputil.ReverseProxy{
+	return Local(&httputil.ReverseProxy{
 		Rewrite:       func(*httputil.ProxyRequest) {}, // the gateway picks the destination
 		Transport:     gw,
 		FlushInterval: -1, // responses are streams and must not be buffered
-	}
+	})
+}
+
+// Local keeps web pages away from a handler. Claude Code and autoclaude
+// never send an Origin header; a page open in the user's browser would, and
+// could otherwise spend the provider keys the gateway adds to requests.
+func Local(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Origin") != "" {
 			http.Error(w, "requests from web pages are not accepted", http.StatusForbidden)
 			return
 		}
-		forward.ServeHTTP(w, r)
+		next.ServeHTTP(w, r)
 	})
 }

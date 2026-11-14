@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -21,16 +22,16 @@ import (
 	"github.com/zemf4you/autoclaude/internal/proxy"
 )
 
-// sessionStart is the request every Claude Code session makes when it starts.
-const sessionStart = "/api/claude_cli/bootstrap"
+// reloadPath is where a running gateway takes the order to re-read its
+// configuration. `autoclaude reload` posts to it.
+const reloadPath = "/autoclaude/reload"
 
 // program is the gateway as the service manager runs it.
 //
-// It follows the configuration file without a restart, but only at the
-// moments when Claude builds its list of models: when Desktop asks claude.ai
-// for its menu and, where that menu is not ours, when a Claude Code session
-// starts. Picking the changes up at any other time could leave Claude
-// offering a model the gateway has just stopped serving.
+// It follows the configuration file without a restart, at two moments: when
+// it is told to with `autoclaude reload`, and when Claude Desktop asks
+// claude.ai for its menu, so that the menu is always built from the
+// configuration the gateway is using.
 type program struct {
 	path    string
 	gateway *gateway.Gateway
@@ -55,49 +56,55 @@ func (p *program) config() *config.Config {
 	return p.cfg
 }
 
-// refresh re-reads the configuration file if it has changed. A file that
-// cannot be used is reported and the gateway keeps what it has.
+// refresh re-reads the configuration file if it has changed since it was
+// last read.
 func (p *program) refresh() {
+	if info, err := os.Stat(p.path); err == nil && !info.ModTime().Equal(p.lastModified()) {
+		for _, line := range p.reload() {
+			slog.Info(line)
+		}
+	}
+}
+
+func (p *program) lastModified() time.Time {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	info, err := os.Stat(p.path)
-	if err != nil || info.ModTime().Equal(p.modified) {
-		return
+	return p.modified
+}
+
+// reload re-reads the configuration file and reports, line by line, what
+// came of it. A file that cannot be used leaves the gateway as it is.
+func (p *program) reload() (report []string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if info, err := os.Stat(p.path); err == nil {
+		p.modified = info.ModTime()
 	}
-	p.modified = info.ModTime()
 	cfg, warnings, err := config.Load(p.path)
 	if err != nil {
-		slog.Error("configuration changed but cannot be used, keeping the previous one", "error", err)
-		return
+		return []string{"The configuration cannot be used and was not applied: " + err.Error()}
 	}
 	for _, warning := range warnings {
-		slog.Warn(warning)
+		report = append(report, "Warning: "+warning)
 	}
-	if cfg.Listen != p.cfg.Listen || cfg.DesktopMenu != p.cfg.DesktopMenu {
-		slog.Warn("listen and desktop_menu take effect with `autoclaude install`; the rest of the configuration is applied now")
-		cfg.Listen, cfg.DesktopMenu = p.cfg.Listen, p.cfg.DesktopMenu
+	if cfg.Listen != p.cfg.Listen || cfg.Desktop != p.cfg.Desktop {
+		report = append(report, "listen and desktop take effect with `autoclaude install`; the rest is applied now.")
+		cfg.Listen, cfg.Desktop = p.cfg.Listen, p.cfg.Desktop
 	}
 	p.cfg = cfg
 	p.gateway.Configure(cfg)
 	if err := claudecode.SetModels(claudecode.SettingsPath(), pickerOptions(cfg)); err != nil {
-		slog.Warn("the model picker of Claude Code was not updated", "error", err)
+		report = append(report, "Warning: the model picker of Claude Code was not updated: "+err.Error())
 	}
-	slog.Info("configuration reloaded")
-	logModels(cfg)
+	return append(report, modelLines(cfg)...)
 }
 
-func logModels(cfg *config.Config) {
-	for _, m := range cfg.Models {
-		slog.Info("model", "id", m.ID, "name", m.Name, "provider", m.Provider, "upstream", m.Upstream, "in Desktop", inDesktop(cfg, m))
+// serveReload answers `autoclaude reload` with the report of the reload.
+func (p *program) serveReload(w http.ResponseWriter, _ *http.Request) {
+	for _, line := range p.reload() {
+		slog.Info(line)
+		fmt.Fprintln(w, line)
 	}
-}
-
-// RoundTrip passes API requests to the gateway.
-func (p *program) RoundTrip(r *http.Request) (*http.Response, error) {
-	if r.URL.Path == sessionStart && !p.config().DesktopMenu {
-		p.refresh()
-	}
-	return p.gateway.RoundTrip(r)
 }
 
 // Start brings the gateway up and returns; the manager expects that.
@@ -108,9 +115,10 @@ func (p *program) Start(service.Service) error {
 		return err
 	}
 	direct := http.NewServeMux()
-	direct.Handle("/", proxy.API(p))
-	interceptions := []proxy.Interception{{Host: gateway.AnthropicHost, CA: ca, Handler: p}}
-	if cfg.DesktopMenu {
+	direct.Handle("/", proxy.API(p.gateway))
+	direct.Handle("POST "+reloadPath, proxy.Local(http.HandlerFunc(p.serveReload)))
+	interceptions := []proxy.Interception{{Host: gateway.AnthropicHost, CA: ca, Handler: p.gateway}}
+	if cfg.OwnEntries() {
 		ca, _, err := proxy.LoadCA(dir, menuCA, menu.Host)
 		if err != nil {
 			return err
@@ -130,8 +138,10 @@ func (p *program) Start(service.Service) error {
 	if err != nil {
 		return err
 	}
-	slog.Info("gateway started", "listen", cfg.Listen, "ca", caPath, "desktop menu", cfg.DesktopMenu)
-	logModels(cfg)
+	slog.Info("gateway started", "listen", cfg.Listen, "ca", caPath, "desktop", cfg.Desktop)
+	for _, line := range modelLines(cfg) {
+		slog.Info(line)
+	}
 	p.server = &http.Server{
 		Handler:           proxy.New(direct, interceptions...),
 		ReadHeaderTimeout: 10 * time.Second,

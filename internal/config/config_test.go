@@ -62,9 +62,8 @@ func TestLoad(t *testing.T) {
 	}
 }
 
-// A model may carry a slot and a menu name at once; desktop_menu decides
-// which of the two is in force.
-func TestDesktopMenuPicksTheWayIntoTheMenu(t *testing.T) {
+// The desktop setting picks the way into the menu of Claude Desktop.
+func TestDesktopPicksTheWayIntoTheMenu(t *testing.T) {
 	cfg, _, _ := load(t, twoModels)
 	if got := routes(cfg); !slices.Equal(got, []string{"claude-opus-4-6", "deepseek-v4-pro", "qwen3.5:4b"}) {
 		t.Errorf("with slots, the gateway answers to %q", got)
@@ -73,7 +72,7 @@ func TestDesktopMenuPicksTheWayIntoTheMenu(t *testing.T) {
 		t.Errorf("with slots, menu = %v", cfg.Menu())
 	}
 
-	cfg, _, _ = load(t, "desktop_menu = true\n"+twoModels)
+	cfg, _, _ = load(t, "desktop = \"entries\"\n"+twoModels)
 	if got := routes(cfg); !slices.Equal(got, []string{"deepseek-v4-pro", "qwen3.5:4b"}) {
 		t.Errorf("with the menu, the gateway answers to %q", got)
 	}
@@ -102,6 +101,7 @@ func TestExample(t *testing.T) {
 func TestMistakesAreLeftOutWithAWarning(t *testing.T) {
 	cfg, warnings, err := load(t, `
 listn = ":1"
+desktop = "menu"
 
 [providers.local]
 base_url = "http://127.0.0.1:8000"
@@ -140,13 +140,16 @@ slot = "claude-opus-4-6"
 	if cfg.Routes()["claude-opus-4-6"].ID != "good" {
 		t.Error("a slot goes to the first model that names it")
 	}
-	for _, want := range []string{`"listn"`, `"broken"`, `"my model"`, `"good" is ignored`, `"orphan"`, `slot "claude-opus-4-6"`} {
+	for _, want := range []string{`desktop must be`, `"listn"`, `"broken"`, `"my model"`, `"good" is ignored`, `"orphan"`, `slot "claude-opus-4-6"`} {
 		if !slices.ContainsFunc(warnings, func(w string) bool { return strings.Contains(w, want) }) {
 			t.Errorf("no warning mentions %s in %q", want, warnings)
 		}
 	}
-	if len(warnings) != 6 {
-		t.Errorf("%d warnings, want 6: %q", len(warnings), warnings)
+	if len(warnings) != 7 {
+		t.Errorf("%d warnings, want 7: %q", len(warnings), warnings)
+	}
+	if cfg.OwnEntries() {
+		t.Error("an unknown desktop setting must fall back to slots")
 	}
 }
 
