@@ -2,7 +2,6 @@ package desktop
 
 import (
 	"encoding/xml"
-	"fmt"
 	"os"
 	"os/exec"
 	"os/user"
@@ -16,6 +15,7 @@ import (
 // profile belongs to the current user and holds that one setting.
 const (
 	profileID    = "io.github.zemf4you.autoclaude.desktop-proxy"
+	profileName  = "AutoClaude: model menu for Claude Desktop"
 	profilesPane = "x-apple.systempreferences:com.apple.Profiles-Settings.extension"
 )
 
@@ -35,7 +35,7 @@ var profile = template.Must(template.New("profile").Funcs(template.FuncMap{"xml"
 	<key>PayloadScope</key><string>User</string>
 	<key>PayloadIdentifier</key><string>{{.ID}}</string>
 	<key>PayloadUUID</key><string>6C0F4B1E-5D0A-4E0B-9A52-1F5B3A7C2D10</string>
-	<key>PayloadDisplayName</key><string>AutoClaude: model menu for Claude Desktop</string>
+	<key>PayloadDisplayName</key><string>{{.Name}}</string>
 	<key>PayloadDescription</key><string>Sends the connections of Claude Desktop to claude.ai through the local AutoClaude gateway. Affects Claude Desktop only.</string>
 	<key>PayloadContent</key>
 	<array>
@@ -106,15 +106,20 @@ func setProxy(pacURL string) error {
 		return err
 	}
 	defer file.Close()
-	settings := struct{ ID, Setting, PACURL string }{profileID, proxySetting, pacURL}
+	settings := struct{ ID, Name, Setting, PACURL string }{profileID, profileName, proxySetting, pacURL}
 	if err := profile.Execute(file, settings); err != nil {
 		return err
 	}
 	if err := run("open", file.Name()); err != nil {
 		return err
 	}
-	fmt.Println("One step is left to you: in System Settings, double-click the AutoClaude profile and choose Install.")
 	return run("open", profilesPane)
+}
+
+// byHandSteps is what installing the profile takes of the user.
+var byHandSteps = []string{
+	"In System Settings, double-click the AutoClaude profile.",
+	"Click Install, and confirm with your password.",
 }
 
 func unsetProxy() error {

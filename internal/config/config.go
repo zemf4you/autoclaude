@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -110,8 +111,8 @@ const (
 	MaxContext = 10_000_000
 )
 
-// Example is a configuration file with every setting explained. It is what a
-// new user starts from.
+// Example is a short configuration file with examples to turn on. It is
+// what a new user starts from.
 //
 //go:embed example.toml
 var Example []byte
@@ -123,6 +124,25 @@ func Create(path string) error {
 		return err
 	}
 	return os.WriteFile(path, Example, 0o600)
+}
+
+var desktopSetting = regexp.MustCompile(`(?m)^desktop[ \t]*=[ \t]*"[^"\n]*"`)
+
+// SetDesktop writes the way into the Desktop menu to the configuration file
+// at path and leaves the rest of the file, comments included, as it is.
+func SetDesktop(path, desktop string) error {
+	file, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	setting := []byte(fmt.Sprintf("desktop = %q", desktop))
+	if desktopSetting.Match(file) {
+		file = desktopSetting.ReplaceAllLiteral(file, setting)
+	} else {
+		// A setting of the file itself has to come before its first table.
+		file = append(append(setting, "\n\n"...), file...)
+	}
+	return os.WriteFile(path, file, 0o600)
 }
 
 // DefaultPath returns the default location of the configuration file.

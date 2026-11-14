@@ -9,7 +9,7 @@ import (
 
 func TestProfile(t *testing.T) {
 	var out bytes.Buffer
-	settings := struct{ ID, Setting, PACURL string }{profileID, proxySetting, "http://127.0.0.1:8484/proxy.pac?a=1&b=2"}
+	settings := struct{ ID, Name, Setting, PACURL string }{profileID, profileName, proxySetting, "http://127.0.0.1:8484/proxy.pac?a=1&b=2"}
 	if err := profile.Execute(&out, settings); err != nil {
 		t.Fatal(err)
 	}

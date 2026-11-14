@@ -33,3 +33,6 @@ func unsetProxy() error {
 func launch(flag string) error {
 	return run("cmd", "/c", "start", "", "claude", flag)
 }
+
+// byHandSteps is empty: nothing here is left to the user.
+var byHandSteps []string

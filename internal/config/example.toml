@@ -1,96 +1,32 @@
 # AutoClaude configuration.
+# Every setting: https://github.com/zemf4you/autoclaude/blob/main/docs/configuration.md
 #
-# Lines that start with "#" right before a setting are examples: remove the
-# "#" to turn them on. Apply your changes with `autoclaude reload`; after
-# changing listen or desktop, run `autoclaude install` instead.
-# `autoclaude status` shows how things stand.
-#
-# Keep this file private: it holds your provider keys.
+# Remove the "#" in front of an example to use it. Open this file with
+# `autoclaude edit`; keep it private, it holds your keys.
 
-# Address the gateway listens on. It must be a loopback address.
 listen = "127.0.0.1:8484"
+desktop = "slots" # chosen in `autoclaude install`
 
 
-# ── Claude Desktop ───────────────────────────────────────────────────────────
-#
-# Claude Desktop lists only Claude models. Your models can reach its menu in
-# one of two ways. This concerns Desktop only: in the CLI your models are in
-# the `/model` picker either way.
-#
-# "slots": borrowed entries, no certificate.
-#   A model takes the menu entry of the Claude model named by its `slot`: the
-#   entry keeps its name and your model answers. A model without a slot is
-#   not in the Desktop menu. The entries under "More models" are good slots: claude-opus-4-6, claude-opus-4-7, claude-opus-4-8,
-#   claude-sonnet-4-6, claude-opus-5, claude-sonnet-5, claude-fable-5,
-#   claude-fable-5-1, claude-haiku-4-5-20251001.
-#
-# "entries": entries of their own, under the models' names.
-#   `autoclaude install` then adds a certificate for claude.ai to your user
-#   account, asking for your password, and puts the gateway between Claude
-#   Desktop and claude.ai. Anthropic does not support this: read "Anthropic's
-#   terms" in the README before you turn it on.
-
-desktop = "slots"
-
-
-# ── Context window ───────────────────────────────────────────────────────────
-#
-# Give a model its window with `context` in its [[model]] block, below.
-#
-# This one is the window Claude Code should assume for your models that have
-# none there. Left to itself it assumes a very large one and compacts the
-# conversation only once the provider rejects a request as too long. Claude
-# Code keeps a single such value, so give the smallest window among those
-# models. Claude models are not affected.
-
-#context_window = 64000
-
-
-# ── Providers ────────────────────────────────────────────────────────────────
-#
-# The services that run your models. Each must speak the Anthropic Messages
-# API; for an OpenAI-only endpoint, put a translator such as LiteLLM in front.
-# The name after "providers." is yours to choose.
-#
-#   base_url   where the provider serves the API, without "/v1/messages"
-#   api_key    your key; leave it out for a local server that needs none
+# Where your models run.
 
 #[providers.deepseek]
 #base_url = "https://api.deepseek.com/anthropic"
 #api_key = "sk-..."
 
-#[providers.openrouter]
-#base_url = "https://openrouter.ai/api"
-#api_key = "sk-or-..."
-
 #[providers.local]
 #base_url = "http://127.0.0.1:8000" # vLLM, llama.cpp, Ollama
 
 
-# ── Models ───────────────────────────────────────────────────────────────────
-#
-# Your models, one [[model]] block each. A model that is not listed here goes
-# to Anthropic on your subscription.
-#
-#   id         what you pick in Claude Code: `/model deepseek-v4-pro`
-#   provider   the name of one of the providers above
-#   upstream   the model's name at the provider, if it differs from id
-#   name       what to call the model in menus; the id if left out
-#   slot       the Claude model whose place it takes in Claude Desktop with
-#              desktop = "slots"; see above
-#   context    its context window in tokens, from 100000 to 10000000: Claude
-#              Code shows it and compacts the conversation by it
+# Your models.
 
 #[[model]]
 #id = "deepseek-v4-pro"
 #provider = "deepseek"
 #name = "DeepSeek V4 Pro"
-#slot = "claude-opus-4-6"
 #context = 1000000
+#slot = "claude-opus-4-6"
 
 #[[model]]
 #id = "qwen"
 #provider = "local"
-#upstream = "Qwen/Qwen3-Coder-30B-A3B-Instruct"
-#name = "Qwen 3 Coder"
-#slot = "claude-sonnet-4-6"

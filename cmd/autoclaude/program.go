@@ -85,18 +85,18 @@ func (p *program) reload() (report []string) {
 		return []string{"The configuration cannot be used and was not applied: " + err.Error()}
 	}
 	for _, warning := range warnings {
-		report = append(report, "Warning: "+warning)
+		report = append(report, warningPrefix+warning)
 	}
 	if cfg.Listen != p.cfg.Listen || cfg.Desktop != p.cfg.Desktop {
-		report = append(report, "listen and desktop take effect with `autoclaude install`; the rest is applied now.")
+		report = append(report, warningPrefix+"listen and desktop take effect with `autoclaude install`; the rest is applied now.")
 		cfg.Listen, cfg.Desktop = p.cfg.Listen, p.cfg.Desktop
 	}
 	p.cfg = cfg
 	p.gateway.Configure(cfg)
 	if err := applyModels(claudecode.SettingsPath(), cfg); err != nil {
-		report = append(report, "Warning: the settings of Claude Code were not updated: "+err.Error())
+		report = append(report, warningPrefix+"the settings of Claude Code were not updated: "+err.Error())
 	}
-	return append(report, modelLines(cfg)...)
+	return append(modelLines(cfg), report...)
 }
 
 // serveReload answers `autoclaude reload` with the report of the reload.

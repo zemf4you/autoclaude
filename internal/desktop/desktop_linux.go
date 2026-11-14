@@ -87,3 +87,6 @@ func writeSettings(change func(map[string]any)) error {
 func launch(flag string) error {
 	return run("claude-desktop", flag)
 }
+
+// byHandSteps is empty: nothing here is left to the user.
+var byHandSteps []string

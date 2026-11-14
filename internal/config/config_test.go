@@ -92,7 +92,7 @@ func TestExample(t *testing.T) {
 	if err != nil || len(warnings) != 0 {
 		t.Fatalf("with the examples on: warnings %q, error %v", warnings, err)
 	}
-	if len(cfg.Providers) != 3 || len(cfg.Models) != 2 || len(cfg.Routes()) != 4 || cfg.ContextWindow != 64000 || cfg.Models[0].Context != 1000000 {
+	if len(cfg.Providers) != 2 || len(cfg.Models) != 2 || len(cfg.Routes()) != 3 || cfg.Models[0].Context != 1000000 {
 		t.Errorf("providers %d, models %d, routes %d", len(cfg.Providers), len(cfg.Models), len(cfg.Routes()))
 	}
 }
@@ -155,6 +155,31 @@ slot = "claude-opus-4-6"
 	}
 	if cfg.OwnEntries() {
 		t.Error("an unknown desktop setting must fall back to slots")
+	}
+}
+
+// The installer records the user's choice in the file the user edits.
+func TestSetDesktopKeepsTheRestOfTheFile(t *testing.T) {
+	for name, content := range map[string]string{
+		"the example":      string(Example),
+		"without the line": "# mine\n[providers.local]\nbase_url = \"http://127.0.0.1:8000\"\n",
+	} {
+		path := filepath.Join(t.TempDir(), "config.toml")
+		os.WriteFile(path, []byte(content), 0o600)
+		if err := SetDesktop(path, Entries); err != nil {
+			t.Fatal(err)
+		}
+		cfg, warnings, err := Load(path)
+		if err != nil || len(warnings) != 0 || !cfg.OwnEntries() {
+			t.Errorf("%s: entries %v, warnings %q, error %v", name, cfg != nil && cfg.OwnEntries(), warnings, err)
+		}
+		written, _ := os.ReadFile(path)
+		if rest := strings.Replace(string(written), `desktop = "entries"`, `desktop = "slots"`, 1); name == "the example" && rest != content {
+			t.Errorf("%s: more than the setting changed", name)
+		}
+		if !strings.Contains(string(written), strings.TrimSpace(strings.SplitN(content, "\n", 2)[0])) {
+			t.Errorf("%s: the comments are gone", name)
+		}
 	}
 }
 

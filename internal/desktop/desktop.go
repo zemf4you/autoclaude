@@ -37,17 +37,23 @@ type authority struct {
 // Enable makes the user's account trust the certificate authority at
 // certPath and points Claude Desktop at the proxy auto-config script at
 // pacURL. It is safe to repeat.
-func Enable(certPath, pacURL string) error {
+//
+// Where the system wants the user's own hand in it, Enable returns the steps
+// that are left to them; Status tells when they have been taken.
+func Enable(certPath, pacURL string) (byHand []string, err error) {
 	ca, err := readAuthority(certPath)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if !trusted(ca) {
 		if err := trust(ca); err != nil {
-			return err
+			return nil, err
 		}
 	}
-	return setProxy(pacURL)
+	if err := setProxy(pacURL); err != nil || proxyInstalled() {
+		return nil, err
+	}
+	return byHandSteps, nil
 }
 
 // Disable undoes Enable. It is safe to call when nothing was enabled.
