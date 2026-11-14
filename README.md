@@ -257,3 +257,7 @@ What applies to the menu of Claude Desktop in addition:
 
 If that is more than you want to risk, leave `[menu]` out and use the
 borrowed entries: nothing touches `claude.ai` then.
+
+## License
+
+[MIT](LICENSE)
