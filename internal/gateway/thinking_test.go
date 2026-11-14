@@ -7,86 +7,77 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// history is a conversation after two model switches: a turn by Claude,
-// one by deepseek, one by qwen.
-const history = `{"model":"m","thinking":{"type":"enabled"},"context_management":{},"messages":[
+// history is a conversation after three model switches: a turn by Claude,
+// one by deepseek, one by qwen, and one whose envelope cannot be read.
+var history = `{"model":"m","thinking":{"type":"enabled"},"messages":[
  {"role":"user","content":"hi"},
  {"role":"assistant","content":[{"type":"thinking","thinking":"a","signature":"CLAUDE"},{"type":"redacted_thinking","data":"x"},{"type":"tool_use","id":"1","name":"t","input":{}}]},
  {"role":"user","content":[{"type":"tool_result","tool_use_id":"1","content":"ok"}]},
- {"role":"assistant","content":[{"type":"thinking","thinking":"b","signature":"autoclaude deepseek DS"},{"type":"text","text":"done"}]},
+ {"role":"assistant","content":[{"type":"thinking","thinking":"b","signature":"` + wrap("deepseek", "DS") + `"},{"type":"redacted_thinking","data":"` + wrap("deepseek", "R") + `"},{"type":"text","text":"done"}]},
  {"role":"user","content":"more"},
- {"role":"assistant","content":[{"type":"thinking","thinking":"c","signature":"autoclaude qwen "}]}
+ {"role":"assistant","content":[{"type":"thinking","thinking":"c","signature":"` + wrap("qwen", "") + `"}]},
+ {"role":"user","content":"and more"},
+ {"role":"assistant","content":[{"type":"thinking","thinking":"d","signature":"` + envelopePrefix + `?"},{"type":"text","text":"end"}]}
 ]}`
 
-func signatures(body []byte) []string {
-	var out []string
-	for _, s := range gjson.GetBytes(body, `messages.#.content.#(type=="thinking")#.signature|@flatten`).Array() {
-		out = append(out, s.String())
-	}
+// carried returns what the thinking blocks of a request carry in their
+// signature or data, in order.
+func carried(body []byte) []string {
+	out := []string{}
+	gjson.GetBytes(body, "messages.#.content|@flatten").ForEach(func(_, block gjson.Result) bool {
+		if isThinking(block) {
+			out = append(out, block.Get(carrier(block)).String())
+		}
+		return true
+	})
 	return out
 }
 
-func TestNative(t *testing.T) {
+func TestOpenEnvelopes(t *testing.T) {
 	cases := []struct {
-		owner      string
-		signatures []string
-		redacted   int64
-		last       string // type of the only block of the last turn
+		name     string
+		upstream *upstream
+		carried  []string
+		qwenTurn string // type of the only block of the turn by qwen
 	}{
-		{"", []string{"CLAUDE"}, 1, "text"},
-		{"deepseek", []string{"DS"}, 0, "text"},
-		{"qwen", []string{""}, 0, "thinking"},
+		{"Claude takes its own blocks", &upstream{}, []string{"CLAUDE", "x"}, "text"},
+		{"a provider takes every block", &upstream{thirdParty: true, id: "qwen"}, []string{"CLAUDE", "x", "DS", "R", ""}, "thinking"},
+		{"a provider that verifies takes its own", &upstream{thirdParty: true, id: "deepseek", verifies: true}, []string{"DS", "R"}, "text"},
 	}
 	for _, c := range cases {
-		out, mixed := native([]byte(history), c.owner)
-		if !mixed {
-			t.Errorf("owner %q: the history is mixed", c.owner)
-		}
+		out := openEnvelopes([]byte(history), c.upstream)
 		if !gjson.ValidBytes(out) {
-			t.Fatalf("owner %q: invalid JSON", c.owner)
+			t.Fatalf("%s: invalid JSON", c.name)
 		}
-		if got := signatures(out); !slices.Equal(got, c.signatures) {
-			t.Errorf("owner %q: signatures = %q, want %q", c.owner, got, c.signatures)
+		if got := carried(out); !slices.Equal(got, c.carried) {
+			t.Errorf("%s: blocks carry %q, want %q", c.name, got, c.carried)
 		}
-		if got := gjson.GetBytes(out, `messages.1.content.#(type=="redacted_thinking")#|#`).Int(); got != c.redacted {
-			t.Errorf("owner %q: redacted_thinking blocks = %d, want %d", c.owner, got, c.redacted)
-		}
-		if got := gjson.GetBytes(out, "messages.5.content.0.type").String(); got != c.last {
-			t.Errorf("owner %q: last turn = %q, want %q", c.owner, got, c.last)
+		if got := gjson.GetBytes(out, "messages.5.content.0.type").String(); got != c.qwenTurn {
+			t.Errorf("%s: the turn by qwen holds %q, want %q", c.name, got, c.qwenTurn)
 		}
 		if got := gjson.GetBytes(out, `messages.1.content.#(type=="tool_use").id`).String(); got != "1" {
-			t.Errorf("owner %q: tool_use lost", c.owner)
+			t.Errorf("%s: tool_use lost", c.name)
 		}
 	}
 }
 
-func TestNativeLeavesClaudeRequestUntouched(t *testing.T) {
+func TestRequestWithoutEnvelopesIsUntouched(t *testing.T) {
 	body := `{"messages": [ {"role":"assistant","content":[{"type":"thinking","signature":"S"}]} ]}`
-	if got, mixed := native([]byte(body), ""); string(got) != body || mixed {
-		t.Errorf("mixed = %v, body: %s", mixed, got)
+	for _, up := range []*upstream{{}, {thirdParty: true, id: "qwen"}} {
+		if got := openEnvelopes([]byte(body), up); string(got) != body {
+			t.Errorf("third party %v: body %s", up.thirdParty, got)
+		}
 	}
 }
 
-func TestWithoutThinking(t *testing.T) {
-	out, ok := withoutThinking([]byte(history))
-	if !ok || !gjson.ValidBytes(out) {
-		t.Fatalf("ok = %v, body: %s", ok, out)
+func TestEnvelope(t *testing.T) {
+	for _, value := range []string{"", "SIG", "openrouter.reasoning:eyJ4IjoxfQ"} {
+		author, original, wrapped := unwrap(wrap("qwen3.5:4b", value))
+		if author != "qwen3.5:4b" || original != value || !wrapped {
+			t.Errorf("%q came back as %q by %q, wrapped %v", value, original, author, wrapped)
+		}
 	}
-	if got := signatures(out); len(got) != 0 {
-		t.Errorf("thinking blocks left: %q", got)
-	}
-	if got := gjson.GetBytes(out, "thinking.type").String(); got != "disabled" {
-		t.Errorf("thinking.type = %q", got)
-	}
-	if gjson.GetBytes(out, "context_management").Exists() {
-		t.Error("context_management not removed")
-	}
-	if _, ok := withoutThinking([]byte(`{"messages":[{"role":"user","content":"hi"}]}`)); ok {
-		t.Error("a request without thinking is conservative already")
-	}
-	// No blocks left in the history, but thinking is still requested.
-	out, ok = withoutThinking([]byte(`{"thinking":{"type":"adaptive"},"messages":[]}`))
-	if !ok || gjson.GetBytes(out, "thinking.type").String() != "disabled" {
-		t.Errorf("ok = %v, body: %s", ok, out)
+	if author, original, wrapped := unwrap("CAQSgAgK"); author != "" || original != "CAQSgAgK" || wrapped {
+		t.Errorf("a signature of Claude: %q by %q, wrapped %v", original, author, wrapped)
 	}
 }

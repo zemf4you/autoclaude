@@ -85,33 +85,9 @@ func post(t *testing.T, url, body string) (int, string) {
 	return resp.StatusCode, string(out)
 }
 
-// Turns of a conversation, as they appear in the messages of a request.
-const (
-	claudeTurn   = `{"role":"assistant","content":[{"type":"thinking","signature":"CLAUDE"},{"type":"tool_use","id":"1"}]}`
-	qwenTurn     = `{"role":"assistant","content":[{"type":"thinking","signature":"autoclaude qwen Q"},{"type":"tool_use","id":"1"}]}`
-	toolResult   = `{"role":"user","content":[{"type":"tool_result","tool_use_id":"1"}]}`
-	userQuestion = `{"role":"user","content":"next"}`
-)
-
-func request(model string, messages ...string) string {
-	return `{"model":"` + model + `","thinking":{"type":"adaptive"},"messages":[` + strings.Join(messages, ",") + `]}`
-}
-
-// rejectThinking makes a fake refuse every request that has thinking enabled.
-func rejectThinking(f *fake) {
-	f.reply = func(w http.ResponseWriter, body string) {
-		if gjson.Get(body, "thinking.type").String() != "disabled" {
-			w.WriteHeader(http.StatusBadRequest)
-			io.WriteString(w, "rejected")
-			return
-		}
-		io.WriteString(w, "accepted")
-	}
-}
-
 func TestClaudeRequestPassesUntouched(t *testing.T) {
 	gw, claude, provider := setup(t)
-	body := `{"model": "claude-fable-5-2",  "messages": [` + claudeTurn + `]}`
+	body := `{"model": "claude-fable-5-2",  "messages": [{"role":"assistant","content":[{"type":"thinking","signature":"CLAUDE"}]}]}`
 	post(t, gw, body)
 
 	if got := claude.requests(); len(provider.requests()) != 0 || len(got) != 1 || got[0] != body {
@@ -125,12 +101,17 @@ func TestClaudeRequestPassesUntouched(t *testing.T) {
 	}
 }
 
-func TestClaudeErrorPassesUntouched(t *testing.T) {
-	gw, claude, _ := setup(t)
-	rejectThinking(claude)
-	status, out := post(t, gw, request("claude", claudeTurn, toolResult))
-	if status != http.StatusBadRequest || out != "rejected" || len(claude.requests()) != 1 {
-		t.Errorf("status %d, response %q, requests %d", status, out, len(claude.requests()))
+func TestErrorPassesUntouched(t *testing.T) {
+	gw, claude, provider := setup(t)
+	for model, upstream := range map[string]*fake{"claude-opus": claude, "qwen": provider} {
+		upstream.reply = func(w http.ResponseWriter, _ string) {
+			w.WriteHeader(http.StatusBadRequest)
+			io.WriteString(w, "rejected")
+		}
+		status, out := post(t, gw, `{"model":"`+model+`","messages":[]}`)
+		if status != http.StatusBadRequest || out != "rejected" || len(upstream.requests()) != 1 {
+			t.Errorf("%s: status %d, response %q, requests %d", model, status, out, len(upstream.requests()))
+		}
 	}
 }
 
@@ -177,19 +158,23 @@ func TestProviderRequestMustCarryWholeHistory(t *testing.T) {
 	}
 }
 
-func TestProviderThinkingIsMarked(t *testing.T) {
+func TestProviderThinkingIsWrapped(t *testing.T) {
 	gw, _, provider := setup(t)
 
 	provider.reply = func(w http.ResponseWriter, _ string) {
-		io.WriteString(w, `{"content":[{"type":"thinking","thinking":"a","signature":"S"},{"type":"text","text":"b"}]}`)
+		io.WriteString(w, `{"content":[{"type":"thinking","thinking":"a","signature":"S"},{"type":"redacted_thinking","data":"D"},{"type":"text","text":"b"}]}`)
 	}
 	_, out := post(t, gw, `{"model":"claude-haiku","messages":[]}`)
 	// The author is the model the user picked, not the provider's name for it.
-	if got := gjson.Get(out, "content.0.signature").String(); got != "autoclaude claude-haiku S" {
+	if got := gjson.Get(out, "content.0.signature").String(); got != wrap("claude-haiku", "S") {
 		t.Errorf("response signature = %q", got)
 	}
+	if got := gjson.Get(out, "content.1.data").String(); got != wrap("claude-haiku", "D") {
+		t.Errorf("response data of the redacted block = %q", got)
+	}
 
-	// Stream: a signature in two parts, no signature at all, a text block.
+	// Stream: a signature in two parts, no signature at all, a text block,
+	// a redacted block.
 	provider.reply = func(w http.ResponseWriter, _ string) {
 		for _, data := range []string{
 			`{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}`,
@@ -200,6 +185,8 @@ func TestProviderThinkingIsMarked(t *testing.T) {
 			`{"type":"content_block_stop","index":1}`,
 			`{"type":"content_block_start","index":2,"content_block":{"type":"text","text":""}}`,
 			`{"type":"content_block_stop","index":2}`,
+			`{"type":"content_block_start","index":3,"content_block":{"type":"redacted_thinking","data":"D"}}`,
+			`{"type":"content_block_stop","index":3}`,
 		} {
 			io.WriteString(w, "event: "+gjson.Get(data, "type").String()+"\r\ndata: "+data+"\r\n\r\n")
 		}
@@ -216,79 +203,38 @@ func TestProviderThinkingIsMarked(t *testing.T) {
 		if signature := gjson.Get(data, "delta.signature"); signature.Exists() {
 			step += " " + signature.String()
 		}
+		if redacted := gjson.Get(data, "content_block.data"); redacted.Exists() {
+			step += " " + redacted.String()
+		}
 		got = append(got, step)
 	}
 	want := []string{
-		"content_block_start 0", "content_block_delta 0 autoclaude qwen SIG", "content_block_stop 0",
-		"content_block_start 1", "content_block_delta 1 autoclaude qwen ", "content_block_stop 1",
+		"content_block_start 0", "content_block_delta 0 " + wrap("qwen", "SIG"), "content_block_stop 0",
+		"content_block_start 1", "content_block_delta 1 " + wrap("qwen", ""), "content_block_stop 1",
 		"content_block_start 2", "content_block_stop 2",
+		"content_block_start 3 " + wrap("qwen", "D"), "content_block_stop 3",
 	}
 	if !slices.Equal(got, want) {
 		t.Errorf("stream =\n%q\nwant\n%q", got, want)
 	}
 }
 
-// A switch in the middle of a tool loop leaves the new model with a history
-// it may refuse. The request then goes through without thinking.
-func TestRejectedHistoryIsRetriedWithoutThinking(t *testing.T) {
+// After a model switch the history holds thinking blocks of both models.
+// Claude gets its own; a provider gets all of them, as they were produced.
+func TestThinkingAfterAModelSwitch(t *testing.T) {
 	gw, claude, provider := setup(t)
-	rejectThinking(claude)
-	rejectThinking(provider)
+	messages := `"messages":[{"role":"assistant","content":[` +
+		`{"type":"thinking","thinking":"a","signature":"CLAUDE"},` +
+		`{"type":"thinking","thinking":"b","signature":"` + wrap("qwen", "Q") + `"},` +
+		`{"type":"text","text":"c"}]}]}`
 
-	for _, model := range []string{"claude", "qwen"} {
-		foreignTurn, upstream := qwenTurn, claude
-		if model == "qwen" {
-			foreignTurn, upstream = claudeTurn, provider
-		}
-		status, out := post(t, gw, request(model, foreignTurn, toolResult))
-		sent := upstream.requests()
-		if status != http.StatusOK || out != "accepted" || len(sent) != 2 {
-			t.Fatalf("%s: status %d, response %q, requests %d", model, status, out, len(sent))
-		}
-		if strings.Contains(sent[1], `"thinking","signature"`) {
-			t.Errorf("%s: the retry carries thinking blocks: %s", model, sent[1])
-		}
+	post(t, gw, `{"model":"claude-opus",`+messages)
+	if got := carried([]byte(claude.requests()[0])); !slices.Equal(got, []string{"CLAUDE"}) {
+		t.Errorf("Claude got blocks carrying %q", got)
 	}
-}
-
-func TestUnrelatedErrorIsReturnedAsIs(t *testing.T) {
-	gw, _, provider := setup(t)
-	provider.reply = func(w http.ResponseWriter, body string) {
-		w.WriteHeader(http.StatusBadRequest)
-		io.WriteString(w, "error "+gjson.Get(body, "thinking.type").String())
-	}
-	// The retry is rejected too: the client sees the original error.
-	if _, out := post(t, gw, request("qwen", qwenTurn, toolResult)); out != "error adaptive" {
-		t.Errorf("response %q", out)
-	}
-	// Nothing to retry when the request is conservative already.
-	before := len(provider.requests())
-	post(t, gw, `{"model":"qwen","messages":[]}`)
-	if got := len(provider.requests()) - before; got != 1 {
-		t.Errorf("requests = %d, want 1", got)
-	}
-}
-
-// A provider that refuses a history refuses it for the whole tool loop, so
-// only the first request of the loop is sent twice.
-func TestRejectionIsRememberedUntilTheToolLoopEnds(t *testing.T) {
-	gw, _, provider := setup(t)
-	rejectThinking(provider)
-	steps := []struct {
-		messages []string
-		requests int // requests the provider has seen so far
-	}{
-		{[]string{claudeTurn, toolResult}, 2},                         // rejected, then retried
-		{[]string{claudeTurn, toolResult, qwenTurn, toolResult}, 3},   // same loop: conservative at once
-		{[]string{claudeTurn, toolResult, qwenTurn, userQuestion}, 5}, // next user message: full form again
-	}
-	for i, step := range steps {
-		if status, _ := post(t, gw, request("qwen", step.messages...)); status != http.StatusOK {
-			t.Fatalf("step %d: status %d", i, status)
-		}
-		if got := len(provider.requests()); got != step.requests {
-			t.Fatalf("step %d: provider saw %d requests, want %d", i, got, step.requests)
-		}
+	post(t, gw, `{"model":"qwen",`+messages)
+	if got := carried([]byte(provider.requests()[0])); !slices.Equal(got, []string{"CLAUDE", "Q"}) {
+		t.Errorf("the provider got blocks carrying %q", got)
 	}
 }
 

@@ -243,8 +243,8 @@ the keys in it.
 - `context` takes 100,000 to 10,000,000 tokens; Claude Code accepts nothing
   else. [Smaller windows](docs/how-it-works.md#context-windows) are handled
   differently.
-- A model switch starts the prompt cache over, and the new model does not see
-  the previous model's thinking.
+- A model switch starts the prompt cache over, and Claude does not see the
+  thinking of your models.
 - Desktop's menu and the list of models belong to Anthropic's servers. If
   their format changes, your models leave the menu until AutoClaude catches
   up; Claude keeps working.

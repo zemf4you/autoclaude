@@ -28,8 +28,14 @@ type upstream struct {
 	// with the client's own credentials.
 	thirdParty bool
 	key        string
+	// id is the ID of a third-party model in the configuration. The
+	// model's thinking blocks are recorded as written by it.
+	id string
 	// model is the model's name at a third-party provider.
 	model string
+	// verifies tells that a third-party provider checks the signatures of
+	// thinking blocks, so that the model takes only its own.
+	verifies bool
 	// extra holds the fields a third-party provider is sent on top of the
 	// client's request.
 	extra map[string]any
@@ -48,9 +54,6 @@ type Gateway struct {
 	// with a model Anthropic has never heard of.
 	retired   sync.Map
 	transport http.RoundTripper
-	// rejected holds the tool loops, keyed by session and model, whose
-	// history the provider has refused to take with thinking blocks.
-	rejected sync.Map
 }
 
 // New builds a gateway from a loaded configuration.
@@ -75,7 +78,9 @@ func (g *Gateway) Configure(cfg *config.Config) {
 			url:        baseURL(p.BaseURL),
 			thirdParty: true,
 			key:        p.APIKey,
+			id:         m.ID,
 			model:      m.Upstream,
+			verifies:   m.VerifiesThinking,
 			extra:      m.ExtraBody,
 		}
 	}
@@ -120,9 +125,9 @@ func (g *Gateway) RoundTrip(r *http.Request) (*http.Response, error) {
 		}
 	}
 	model := gjson.GetBytes(body, "model").String()
-	up, owner := g.anthropic, "" // unmarked thinking blocks belong to Claude
+	up := g.anthropic
 	if u, ok := (*g.models.Load())[model]; ok {
-		up, owner = u, model
+		up = u
 	} else if _, gone := g.retired.Load(model); gone {
 		slog.Warn("request for a model that is no longer configured", "model", model)
 		return removed(r, model), nil
@@ -134,17 +139,15 @@ func (g *Gateway) RoundTrip(r *http.Request) (*http.Response, error) {
 		}
 		body = portable(body, up.model, up.extra)
 	}
-	body, mixed := native(body, owner)
+	body = openEnvelopes(body, up)
 
-	x := &exchange{
-		request: address(r, up),
-		body:    body,
-		loop:    r.Header.Get("X-Claude-Code-Session-Id") + " " + model,
-		// A conversation that never left Claude is none of the gateway's
-		// business: its errors go back to the client as they are.
-		retriable: up.thirdParty || mixed,
-	}
-	resp, err := g.send(x)
+	out := address(r, up)
+	out.ContentLength = int64(len(body))
+	// The transport sends the body again if the connection it picked turns
+	// out to be closed by the upstream.
+	out.GetBody = func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(body)), nil }
+	out.Body, _ = out.GetBody()
+	resp, err := g.transport.RoundTrip(out)
 	if err != nil {
 		slog.Error("upstream did not answer", "model", model, "upstream", up.name, "error", err)
 		return nil, err
@@ -152,7 +155,7 @@ func (g *Gateway) RoundTrip(r *http.Request) (*http.Response, error) {
 	slog.Info("request", "method", r.Method, "path", r.URL.Path,
 		"model", model, "upstream", up.name, "status", resp.StatusCode)
 	if up.thirdParty && resp.StatusCode == http.StatusOK {
-		if err := markResponse(resp, model, gjson.GetBytes(body, "stream").Bool()); err != nil {
+		if err := wrapResponse(resp, up.id, gjson.GetBytes(body, "stream").Bool()); err != nil {
 			resp.Body.Close()
 			return nil, err
 		}
@@ -186,69 +189,13 @@ func address(r *http.Request, up *upstream) *http.Request {
 	return out
 }
 
-// exchange is a request on its way to an upstream.
-type exchange struct {
-	request *http.Request
-	body    []byte
-	// loop identifies the tool loop the request belongs to.
-	loop string
-	// retriable allows the conservative retry.
-	retriable bool
-}
-
-// send performs the request with a safety net: if the provider rejects the
-// history, the request is retried once in its conservative form, without
-// thinking. A 400 arrives before the stream starts, so the client never
-// notices the retry.
-//
-// A history rejected once stays rejected until the tool loop ends, because
-// the loop only appends to it. The rest of the loop therefore goes out in
-// the conservative form right away, and the full form is tried again on the
-// next user message: one refusal costs one extra request, not one per step.
-func (g *Gateway) send(x *exchange) (*http.Response, error) {
-	body := x.body
-	safe, differs := withoutThinking(body)
-	canRetry := x.retriable && differs
-	if !inToolLoop(body) {
-		g.rejected.Delete(x.loop)
-	} else if _, rejected := g.rejected.Load(x.loop); rejected && canRetry {
-		body, canRetry = safe, false
-	}
-
-	setBody(x.request, body)
-	resp, err := g.transport.RoundTrip(x.request)
-	if err != nil || resp.StatusCode != http.StatusBadRequest || !canRetry {
-		return resp, err
-	}
-	retry := x.request.Clone(x.request.Context())
-	setBody(retry, safe)
-	second, err := g.transport.RoundTrip(retry)
-	if err != nil {
-		return resp, nil
-	}
-	if second.StatusCode >= http.StatusBadRequest {
-		second.Body.Close()
-		return resp, nil // thinking was not the cause: the client gets the original error
-	}
-	resp.Body.Close()
-	g.rejected.Store(x.loop, struct{}{})
-	slog.Warn("history rejected, request retried without thinking", "upstream", x.request.URL.Host)
-	return second, nil
-}
-
-// inToolLoop reports whether the request continues a tool loop, that is,
-// whether its last message returns tool results.
-func inToolLoop(body []byte) bool {
-	return gjson.GetBytes(body, `messages.@reverse.0.content.#(type=="tool_result")`).Exists()
-}
-
-// markResponse marks the thinking blocks in a third-party provider's
+// wrapResponse wraps the thinking blocks in a third-party provider's
 // response. The client reads the response as the request asked for it, as a
 // stream or as a single message, whatever content type the provider declares.
-func markResponse(resp *http.Response, model string, stream bool) error {
+func wrapResponse(resp *http.Response, model string, stream bool) error {
 	if stream {
-		resp.Body = newMarkStream(resp.Body, model)
-		resp.ContentLength = -1 // the marks change the length
+		resp.Body = newWrapStream(resp.Body, model)
+		resp.ContentLength = -1 // the envelopes change the length
 		resp.Header.Del("Content-Length")
 		return nil
 	}
@@ -257,17 +204,9 @@ func markResponse(resp *http.Response, model string, stream bool) error {
 	if err != nil {
 		return err
 	}
-	body = markMessage(body, model)
+	body = wrapMessage(body, model)
 	resp.Body = io.NopCloser(bytes.NewReader(body))
 	resp.ContentLength = int64(len(body))
 	resp.Header.Set("Content-Length", strconv.Itoa(len(body)))
 	return nil
-}
-
-func setBody(r *http.Request, body []byte) {
-	r.ContentLength = int64(len(body))
-	// The transport sends the body again if the connection it picked turns
-	// out to be closed by the upstream.
-	r.GetBody = func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(body)), nil }
-	r.Body, _ = r.GetBody()
 }

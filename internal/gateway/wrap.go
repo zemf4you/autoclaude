@@ -12,58 +12,27 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-// A thinking block is accepted back only by the model that produced it:
-// Claude verifies the signature, other models expect their own reasoning
-// format. The history, however, lives on the client, and after a model
-// switch it holds blocks from several authors.
-//
-// The gateway keeps no history, so it records the author in the block
-// itself: the signature in a third-party model's response is prefixed with a
-// mark naming that model. The client returns signatures verbatim, and the
-// mark tells the gateway which blocks are native to the model being
-// addressed. Blocks without a mark belong to Claude.
-
-// markPrefix starts a signature marked by the gateway. Neither Claude's
-// signatures (base64) nor model IDs contain a space, so the mark is
-// unambiguous.
-const markPrefix = "autoclaude "
-
-// mark records in a signature the model that produced the block.
-func mark(model, signature string) string {
-	return markPrefix + model + " " + signature
-}
-
-// author returns the model that produced a block and the block's original
-// signature. An empty author means Claude.
-func author(signature string) (model, original string) {
-	rest, marked := strings.CutPrefix(signature, markPrefix)
-	if !marked {
-		return "", signature
-	}
-	model, original, _ = strings.Cut(rest, " ")
-	return model, original
-}
-
-// markMessage marks the thinking blocks of a non-streaming response.
-func markMessage(body []byte, model string) []byte {
+// wrapMessage wraps the thinking blocks of a non-streaming response.
+func wrapMessage(body []byte, model string) []byte {
 	index := -1
 	gjson.GetBytes(body, "content").ForEach(func(_, block gjson.Result) bool {
 		index++
-		if block.Get("type").String() == "thinking" {
-			path := fmt.Sprintf("content.%d.signature", index)
-			body, _ = sjson.SetBytes(body, path, mark(model, block.Get("signature").String()))
+		if isThinking(block) {
+			path := fmt.Sprintf("content.%d.%s", index, carrier(block))
+			body, _ = sjson.SetBytes(body, path, wrap(model, block.Get(carrier(block)).String()))
 		}
 		return true
 	})
 	return body
 }
 
-// markStream marks the thinking blocks of a streaming response as it is read.
+// wrapStream wraps the thinking blocks of a streaming response as it is read.
 //
 // A provider may send the signature of a block in one signature_delta event,
 // in several, or not at all. The stream withholds those events and sends a
-// single marked signature right before the block closes.
-type markStream struct {
+// single wrapped signature right before the block closes. The data of a
+// redacted block arrives whole, in the event that opens the block.
+type wrapStream struct {
 	source io.ReadCloser
 	reader *bufio.Reader
 	model  string
@@ -73,8 +42,8 @@ type markStream struct {
 	out        bytes.Buffer
 }
 
-func newMarkStream(source io.ReadCloser, model string) *markStream {
-	return &markStream{
+func newWrapStream(source io.ReadCloser, model string) *wrapStream {
+	return &wrapStream{
 		source:     source,
 		reader:     bufio.NewReader(source),
 		model:      model,
@@ -82,12 +51,12 @@ func newMarkStream(source io.ReadCloser, model string) *markStream {
 	}
 }
 
-func (s *markStream) Close() error { return s.source.Close() }
+func (s *wrapStream) Close() error { return s.source.Close() }
 
-func (s *markStream) Read(p []byte) (int, error) {
+func (s *wrapStream) Read(p []byte) (int, error) {
 	for s.out.Len() == 0 {
 		event, err := s.readEvent()
-		s.out.Write(s.markEvent(event))
+		s.out.Write(s.wrapEvent(event))
 		if err != nil && s.out.Len() == 0 {
 			return 0, err
 		}
@@ -96,7 +65,7 @@ func (s *markStream) Read(p []byte) (int, error) {
 }
 
 // readEvent reads one stream event: the lines up to and including a blank one.
-func (s *markStream) readEvent() ([]byte, error) {
+func (s *wrapStream) readEvent() ([]byte, error) {
 	var event []byte
 	for {
 		line, err := s.reader.ReadBytes('\n')
@@ -107,14 +76,17 @@ func (s *markStream) readEvent() ([]byte, error) {
 	}
 }
 
-// markEvent rewrites the events of thinking blocks and returns the rest as is.
-func (s *markStream) markEvent(event []byte) []byte {
+// wrapEvent rewrites the events of thinking blocks and returns the rest as is.
+func (s *wrapStream) wrapEvent(event []byte) []byte {
 	data := eventData(event)
 	index := data.Get("index").Int()
 	switch data.Get("type").String() {
 	case "content_block_start":
-		if block := data.Get("content_block"); block.Get("type").String() == "thinking" {
+		switch block := data.Get("content_block"); block.Get("type").String() {
+		case "thinking":
 			s.signatures[index] = block.Get("signature").String()
+		case "redacted_thinking":
+			return setEventData(event, "content_block.data", wrap(s.model, block.Get("data").String()))
 		}
 	case "content_block_delta":
 		if _, open := s.signatures[index]; open && data.Get("delta.type").String() == "signature_delta" {
@@ -124,7 +96,7 @@ func (s *markStream) markEvent(event []byte) []byte {
 	case "content_block_stop":
 		if signature, open := s.signatures[index]; open {
 			delete(s.signatures, index)
-			return append(signatureEvent(index, mark(s.model, signature)), event...)
+			return append(signatureEvent(index, wrap(s.model, signature)), event...)
 		}
 	}
 	return event
@@ -138,6 +110,13 @@ func eventData(event []byte) gjson.Result {
 		}
 	}
 	return gjson.Result{}
+}
+
+// setEventData sets a field in the JSON payload of a stream event.
+func setEventData(event []byte, path, value string) []byte {
+	payload := strings.TrimSpace(eventData(event).Raw)
+	changed, _ := sjson.Set(payload, path, value)
+	return bytes.Replace(event, []byte(payload), []byte(changed), 1)
 }
 
 // signatureEvent builds the stream event that delivers a block's signature.

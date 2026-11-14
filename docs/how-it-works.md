@@ -39,22 +39,26 @@ in Claude Code is never changed.
 
 ### Thinking
 
-A model's thinking comes back to it in later requests, and a model accepts
-only its own: Claude refuses a block that DeepSeek wrote, and the other way
-round.
+A model's thinking comes back to it in later requests. Anthropic verifies
+every thinking block it is sent and refuses a conversation that holds a
+block Claude did not write. Other providers do not verify.
 
-- The gateway marks the thinking of your models with the model's name as it
-  passes to Claude Code.
-- On every request it sends a model only the blocks that model wrote.
-  Claude's own blocks go back to Claude byte for byte.
-- This is the one change ever made to a request for a Claude model: the
-  thinking of your models is left out of it.
+- **Claude gets only its own thinking.** The thinking of your models is left
+  out of a request for a Claude model. This is the one change ever made to
+  such a request; Claude's own blocks go back byte for byte.
+- **Your models get their thinking back as they produced it.** The gateway
+  removes nothing from a request for them. Claude Code itself leaves out the
+  signed thinking of other models, Claude's included.
+- **A model whose provider verifies thinking** is sent only its own, whatever
+  the client does. Say so with `verifies_thinking = true`; a Claude model
+  served by another provider is one.
 
-Some providers still refuse a history they did not write alone, typically
-when the switch happened in the middle of a tool loop. The request is then
-retried once without thinking, so the conversation can always go on. The
-rest of that loop runs without thinking, the gateway logs a warning, and it
-tries the full history again on your next message.
+To tell the blocks apart, the gateway records the author in each block of
+your models. A block has one field the client returns exactly as it got it:
+the signature, or the data of a redacted block. On its way to Claude Code
+that field is wrapped in an envelope naming the model, such as
+`autoclaude.v1.eyJtb2RlbCI6…`; on its way back to a provider the envelope is
+opened and the original restored. Claude's blocks are never wrapped.
 
 ### History kept by Anthropic
 
@@ -71,8 +75,8 @@ providers do not. For them these become user messages.
 
 - The prompt cache starts over: a provider cannot reuse another provider's
   cache.
-- The new model does not see the previous model's thinking, only its visible
-  output and its tool calls.
+- Claude does not see the thinking of your models, only their visible output
+  and their tool calls.
 
 ## Context windows
 

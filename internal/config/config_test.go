@@ -37,6 +37,7 @@ slot = "claude-opus-4-6"
 id = "qwen3.5:4b"
 provider = "local"
 upstream = "Qwen/Qwen3-Coder"
+verifies_thinking = true
 extra_body = { provider = { only = ["DeepInfra"] } }
 `
 
@@ -57,7 +58,7 @@ func TestLoad(t *testing.T) {
 	}
 	want := []Model{
 		{ID: "deepseek-v4-pro", Provider: "deepseek", Upstream: "deepseek-v4-pro", Name: "DeepSeek V4 Pro", Slot: "claude-opus-4-6"},
-		{ID: "qwen3.5:4b", Provider: "local", Upstream: "Qwen/Qwen3-Coder", Name: "qwen3.5:4b",
+		{ID: "qwen3.5:4b", Provider: "local", Upstream: "Qwen/Qwen3-Coder", Name: "qwen3.5:4b", VerifiesThinking: true,
 			ExtraBody: map[string]any{"provider": map[string]any{"only": []any{"DeepInfra"}}}},
 	}
 	if !reflect.DeepEqual(cfg.Models, want) {

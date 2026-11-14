@@ -70,6 +70,7 @@ to Anthropic on your subscription.
 | `name` | What to call the model in menus. The `id` if left out |
 | `context` | Its context window in tokens, from 100000 to 10000000. Claude Code shows it and compacts the conversation by it |
 | `slot` | With `desktop = "slots"`: the Claude model whose entry in Desktop's menu it takes |
+| `verifies_thinking` | `true` if the provider checks the signatures of thinking blocks, as Anthropic does; a Claude model served by another provider is the usual case. The model is then sent only [its own thinking](how-it-works.md#thinking) |
 | `extra_body` | Fields to add to every request for the model: the options its provider takes beyond the Messages API |
 
 Good slots are the older models under **More models** in Desktop's menu:

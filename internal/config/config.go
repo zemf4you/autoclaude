@@ -58,6 +58,10 @@ type Model struct {
 	// Slot is the ID of the Claude model whose entry in the Desktop menu
 	// the model takes. It is used with Slots.
 	Slot string `toml:"slot"`
+	// VerifiesThinking tells that the provider checks the signatures of
+	// thinking blocks, as Anthropic does. The model is then sent only the
+	// blocks it wrote itself.
+	VerifiesThinking bool `toml:"verifies_thinking"`
 	// ExtraBody holds fields to add to every request for the model: the
 	// options a provider takes beyond the Messages API.
 	ExtraBody map[string]any `toml:"extra_body"`
@@ -205,7 +209,7 @@ func (c *Config) prune() (warnings []string) {
 	for _, m := range c.Models {
 		switch _, hasProvider := c.Providers[m.Provider]; {
 		case m.ID == "" || strings.ContainsAny(m.ID, " \t\n"):
-			// The ID ends up inside thinking signatures, delimited by spaces.
+			// The ID is what the user types after /model.
 			warn("model %q is ignored: the id must not be empty or contain whitespace", m.ID)
 			continue
 		case taken[m.ID]:
